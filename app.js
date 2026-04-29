@@ -864,8 +864,10 @@ async function processRequest(text) {
 
   // Generate PDFs
   try {
-    for (const r of resolved) {
-      await generateAndAttachPDF(r, confirmDiv);
+    if (resolved.length === 1) {
+      await generateAndAttachPDF(resolved[0], confirmDiv);
+    } else {
+      await generateAndAttachBatchPDF(resolved, confirmDiv);
     }
   } catch (err) {
     console.error('PDF generation error:', err);
@@ -961,6 +963,79 @@ async function generateAndAttachPDF({ label, sheets }, parentDiv) {
     : `✅ ${filename}`;
   if (resultCard) resultCard.after(successTag);
 
+  scrollChat();
+}
+
+async function generateAndAttachBatchPDF(resolved, parentDiv) {
+  let totalSheets = resolved.reduce((a, r) => a + r.sheets, 0);
+  showProgress(`Gerando arquivo único com ${totalSheets} folhas...`, 0);
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  
+  let currentSheet = 0;
+  let isFirstPage = true;
+
+  for (const r of resolved) {
+    const { label, sheets } = r;
+    const img = await loadImage(label.dataUrl);
+
+    for (let s = 0; s < sheets; s++) {
+      if (!isFirstPage) {
+        doc.addPage('a4', 'landscape');
+      }
+      isFirstPage = false;
+
+      for (let row = 0; row < ROWS; row++) {
+        for (let col = 0; col < COLS; col++) {
+          const x = MARGIN_X_MM + col * LABEL_W_MM;
+          const y = MARGIN_Y_MM + row * LABEL_H_MM;
+          doc.addImage(img, 'PNG', x, y, LABEL_W_MM, LABEL_H_MM, undefined, 'FAST');
+        }
+      }
+
+      // Draw faint grid lines to aid cutting
+      doc.setDrawColor(200, 200, 200);
+      doc.setLineWidth(0.1);
+
+      for (let col = 0; col <= COLS; col++) {
+        const x = MARGIN_X_MM + col * LABEL_W_MM;
+        doc.line(x, MARGIN_Y_MM, x, MARGIN_Y_MM + ROWS * LABEL_H_MM);
+      }
+      for (let row = 0; row <= ROWS; row++) {
+        const y = MARGIN_Y_MM + row * LABEL_H_MM;
+        doc.line(MARGIN_X_MM, y, MARGIN_X_MM + COLS * LABEL_W_MM, y);
+      }
+
+      currentSheet++;
+      updateProgress((currentSheet / totalSheets) * 100);
+      await sleep(10); // allow UI to update
+    }
+  }
+
+  hideProgress();
+
+  const filename = `etiquetas_lote_${totalSheets}folhas.pdf`;
+  const pdfBlob = doc.output('blob');
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+
+  const bubble = parentDiv.querySelector('.bubble');
+  
+  const btn = document.createElement('button');
+  btn.className = 'download-btn';
+  btn.style.marginTop = '12px';
+  btn.style.width = '100%';
+  btn.style.padding = '12px';
+  btn.style.fontSize = '14px';
+  btn.innerHTML = `⬇️ Baixar PDF Único (${totalSheets} folhas)`;
+  btn.onclick = () => {
+    const a = document.createElement('a');
+    a.href = pdfUrl;
+    a.download = filename;
+    a.click();
+  };
+
+  bubble.appendChild(btn);
   scrollChat();
 }
 
