@@ -429,7 +429,7 @@ async function deleteLabel(id) {
   renderLabelsGrid();
 }
 
-clearAll.addEventListener('click', () => {
+clearAll.addEventListener('click', async () => {
   if (labels.length === 0) return;
   if (confirm('Remover todas as etiquetas salvas?')) {
     labels = [];
