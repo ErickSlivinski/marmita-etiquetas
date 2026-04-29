@@ -181,7 +181,13 @@ const uploadArea     = document.getElementById('uploadArea');
 const fileInput      = document.getElementById('fileInput');
 const labelsGrid     = document.getElementById('labelsGrid');
 const labelCount     = document.getElementById('labelCount');
-const clearAll       = document.getElementById('clearAll');
+const settingsBtn    = document.getElementById('settingsBtn');
+const settingsModal  = document.getElementById('settingsModal');
+const closeSettings  = document.getElementById('closeSettings');
+const btnDangerClearAll = document.getElementById('btnDangerClearAll');
+const clearConfirmBox = document.getElementById('clearConfirmBox');
+const cancelClearBtn = document.getElementById('cancelClearBtn');
+const confirmClearBtn = document.getElementById('confirmClearBtn');
 const chatArea       = document.getElementById('chatArea');
 const chatInput      = document.getElementById('chatInput');
 const sendBtn        = document.getElementById('sendBtn');
@@ -480,14 +486,43 @@ async function deleteLabel(id) {
   renderLabelsGrid();
 }
 
-clearAll.addEventListener('click', async () => {
-  if (labels.length === 0) return;
-  if (confirm('Remover todas as etiquetas salvas?')) {
-    labels = [];
-    await saveLabelsToDB();
-    clearAllCachedPDFs(); // limpa todos os PDFs em cache
-    renderLabelsGrid();
+// ─── Settings modal & Clear All ───────────────────────────────────────────────
+
+settingsBtn.addEventListener('click', () => {
+  settingsModal.hidden = false;
+  clearConfirmBox.hidden = true; // reset confirmation state
+});
+
+closeSettings.addEventListener('click', () => {
+  settingsModal.hidden = true;
+});
+
+settingsModal.addEventListener('click', (e) => {
+  if (e.target === settingsModal) settingsModal.hidden = true;
+});
+
+btnDangerClearAll.addEventListener('click', () => {
+  if (labels.length === 0) {
+    alert('Não há etiquetas para apagar.');
+    return;
   }
+  clearConfirmBox.hidden = false;
+});
+
+cancelClearBtn.addEventListener('click', () => {
+  clearConfirmBox.hidden = true;
+});
+
+confirmClearBtn.addEventListener('click', async () => {
+  labels = [];
+  await saveLabelsToDB();
+  clearAllCachedPDFs();
+  renderLabelsGrid();
+  
+  clearConfirmBox.hidden = true;
+  settingsModal.hidden = true;
+  
+  appendAssistantMessage('<p>🗑️ Todas as etiquetas e caches foram apagados com sucesso.</p>');
 });
 
 // ─── Preview modal ────────────────────────────────────────────────────────────

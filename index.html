@@ -47,7 +47,7 @@
     </div>
 
     <div class="sidebar-footer">
-      <button class="btn-danger" id="clearAll">🗑️ Limpar Tudo</button>
+      <button class="btn-secondary" id="settingsBtn" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;">⚙️ Configurações</button>
     </div>
   </aside>
 
@@ -127,6 +127,31 @@
         <img id="previewImg" src="" alt="Prévia da etiqueta" />
       </div>
       <p id="previewName" class="preview-name"></p>
+    </div>
+  </div>
+
+  <!-- Settings modal -->
+  <div class="modal-overlay" id="settingsModal" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h3>⚙️ Configurações do Sistema</h3>
+        <button class="close-btn" id="closeSettings">✕</button>
+      </div>
+      
+      <div style="margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px;">
+        <h4 style="font-size: 14px; margin-bottom: 8px; color: var(--red);">Zona de Perigo</h4>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Esta ação irá apagar todas as etiquetas salvas, além do cache de PDFs. Não é possível desfazer.</p>
+        <button class="btn-danger" id="btnDangerClearAll">🗑️ Apagar Todas as Etiquetas</button>
+      </div>
+
+      <!-- Confirmation state (hidden by default) -->
+      <div id="clearConfirmBox" style="margin-top: 12px; padding: 12px; background: var(--red-dim); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: var(--radius-sm);" hidden>
+        <p style="font-size: 13px; color: var(--red); font-weight: bold; margin-bottom: 8px;">Tem certeza absoluta?</p>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-secondary" id="cancelClearBtn" style="flex: 1; padding: 6px;">Cancelar</button>
+          <button class="btn-primary" id="confirmClearBtn" style="flex: 1; padding: 6px; background: var(--red); box-shadow: none;">Sim, apagar tudo</button>
+        </div>
+      </div>
     </div>
   </div>
 
