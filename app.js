@@ -216,24 +216,99 @@ fileInput.addEventListener('change', () => {
 });
 
 async function processFiles(files) {
-  const imageFiles = files.filter(f => f.type.startsWith('image/'));
-  if (!imageFiles.length) return;
+  const zipFiles = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.zip'));
+  const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
 
-  for (const file of imageFiles) {
-    await addLabel(file);
+  // Process zip files first
+  for (const zip of zipFiles) {
+    await processZip(zip);
+  }
+
+  // Process image files
+  if (imageFiles.length === 1) {
+    // Single file: show rename modal
+    await addLabelWithRename(imageFiles[0]);
+  } else if (imageFiles.length > 1) {
+    // Multiple files: auto-name from filename (batch mode)
+    await addLabelsBatch(imageFiles);
+  }
+
+  if (!zipFiles.length && !imageFiles.length) {
+    appendAssistantMessage('<p>⚠️ Nenhum arquivo de imagem ou .zip encontrado. Envie arquivos PNG, JPG, WEBP ou um .zip contendo imagens.</p>', 'error-bubble');
   }
 }
 
-function addLabel(file) {
+async function processZip(zipFile) {
+  showProgress(`Extraindo ${zipFile.name}...`, 0);
+
+  try {
+    const zip = await JSZip.loadAsync(zipFile);
+    const imageEntries = [];
+
+    zip.forEach((path, entry) => {
+      if (entry.dir) return;
+      const lower = path.toLowerCase();
+      if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.webp')) {
+        imageEntries.push({ path, entry });
+      }
+    });
+
+    if (!imageEntries.length) {
+      hideProgress();
+      appendAssistantMessage('<p>⚠️ O arquivo .zip não contém imagens (PNG, JPG, WEBP).</p>', 'error-bubble');
+      return;
+    }
+
+    let added = 0;
+    for (let i = 0; i < imageEntries.length; i++) {
+      const { path, entry } = imageEntries[i];
+      updateProgress(((i + 1) / imageEntries.length) * 100);
+
+      const blob = await entry.async('blob');
+      const dataUrl = await blobToDataUrl(blob);
+      const id = crypto.randomUUID();
+
+      // Extract name from file path inside zip
+      const fileName = path.split('/').pop();
+      const name = fileName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+
+      // Check for duplicates by name
+      if (!labels.some(l => l.name.toLowerCase() === name.toLowerCase())) {
+        labels.push({ id, name, dataUrl });
+        added++;
+      }
+    }
+
+    saveLabels();
+    renderLabelsGrid();
+    hideProgress();
+
+    appendAssistantMessage(`<p>📦 Arquivo <strong>${escHtml(zipFile.name)}</strong> extraído com sucesso!</p><p>✅ <strong>${added}</strong> etiqueta${added !== 1 ? 's' : ''} adicionada${added !== 1 ? 's' : ''}.</p><p class="hint-text">💡 Renomeie qualquer etiqueta clicando no ✏️ na sidebar.</p>`);
+  } catch (err) {
+    hideProgress();
+    console.error('Erro ao processar zip:', err);
+    appendAssistantMessage('<p>❌ Erro ao abrir o arquivo .zip. Verifique se o arquivo está válido.</p>', 'error-bubble');
+  }
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Single file upload — shows rename modal
+function addLabelWithRename(file) {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const dataUrl = e.target.result;
       const id = crypto.randomUUID();
-      // Use filename without extension as default name
       const defaultName = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
 
-      // Ask user to confirm / edit the name
       openRenameModal(id, defaultName, () => {
         const label = { id, name: renameInput.value.trim() || defaultName, dataUrl };
         labels.push(label);
@@ -244,6 +319,38 @@ function addLabel(file) {
     };
     reader.readAsDataURL(file);
   });
+}
+
+// Batch upload — auto-names from filenames, no modal
+async function addLabelsBatch(files) {
+  showProgress(`Importando ${files.length} etiquetas...`, 0);
+  let added = 0;
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    updateProgress(((i + 1) / files.length) * 100);
+
+    const dataUrl = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.readAsDataURL(file);
+    });
+
+    const id = crypto.randomUUID();
+    const name = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+
+    // Skip duplicates
+    if (!labels.some(l => l.name.toLowerCase() === name.toLowerCase())) {
+      labels.push({ id, name, dataUrl });
+      added++;
+    }
+  }
+
+  saveLabels();
+  renderLabelsGrid();
+  hideProgress();
+
+  appendAssistantMessage(`<p>📤 Upload em lote concluído!</p><p>✅ <strong>${added}</strong> etiqueta${added !== 1 ? 's' : ''} adicionada${added !== 1 ? 's' : ''}.</p><p class="hint-text">💡 Renomeie qualquer etiqueta clicando no ✏️ na sidebar.</p>`);
 }
 
 // ─── Labels Grid ──────────────────────────────────────────────────────────────
