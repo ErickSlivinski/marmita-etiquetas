@@ -34,39 +34,13 @@ let labels = [];
 
 let pendingRenameId = null;
 
-// ─── Persistence (localStorage) ───────────────────────────────────────────────
-
+// Removed localStorage persistence in favor of IndexedDB
 const STORAGE_KEY = 'etiquetafit_labels';
-
-function saveLabels() {
-  try {
-    const data = labels.map(({ id, name, dataUrl }) => ({ id, name, dataUrl }));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } catch (e) {
-    console.warn('Erro ao salvar etiquetas:', e);
-    // localStorage may be full — notify user
-    if (e.name === 'QuotaExceededError') {
-      alert('⚠️ Espaço de armazenamento cheio! Remova algumas etiquetas antigas para liberar espaço.');
-    }
-  }
-}
-
-function loadLabels() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      labels = JSON.parse(raw);
-    }
-  } catch (e) {
-    console.warn('Erro ao carregar etiquetas:', e);
-    labels = [];
-  }
-}
 
 // ─── PDF Cache (IndexedDB) ────────────────────────────────────────────────────
 
 const PDF_DB_NAME = 'etiquetafit_pdf_cache';
-const PDF_DB_VERSION = 1;
+const PDF_DB_VERSION = 2; // Incremented for labels store
 
 function openPdfCacheDB() {
   return new Promise((resolve, reject) => {
@@ -76,10 +50,57 @@ function openPdfCacheDB() {
       if (!db.objectStoreNames.contains('pdfs')) {
         db.createObjectStore('pdfs', { keyPath: 'key' });
       }
+      if (!db.objectStoreNames.contains('labels')) {
+        db.createObjectStore('labels', { keyPath: 'id' });
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+}
+
+async function saveLabelsToDB() {
+  try {
+    const db = await openPdfCacheDB();
+    const tx = db.transaction('labels', 'readwrite');
+    const store = tx.objectStore('labels');
+    
+    // Clear and re-add all (simple approach for sync)
+    await new Promise((resolve, reject) => {
+      const clearReq = store.clear();
+      clearReq.onsuccess = resolve;
+      clearReq.onerror = reject;
+    });
+
+    for (const label of labels) {
+      store.add(label);
+    }
+    
+    return new Promise((resolve) => {
+      tx.oncomplete = resolve;
+    });
+  } catch (e) {
+    console.error('Erro ao salvar etiquetas no DB:', e);
+  }
+}
+
+async function loadLabelsFromDB() {
+  try {
+    const db = await openPdfCacheDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('labels', 'readonly');
+      const store = tx.objectStore('labels');
+      const req = store.getAll();
+      req.onsuccess = () => {
+        labels = req.result || [];
+        resolve();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    console.error('Erro ao carregar etiquetas do DB:', e);
+    labels = [];
+  }
 }
 
 async function cachePDF(labelId, sheets, blob, filename) {
@@ -279,7 +300,7 @@ async function processZip(zipFile) {
       }
     }
 
-    saveLabels();
+    saveLabelsToDB();
     renderLabelsGrid();
     hideProgress();
 
@@ -309,10 +330,10 @@ function addLabelWithRename(file) {
       const id = crypto.randomUUID();
       const defaultName = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
 
-      openRenameModal(id, defaultName, () => {
+      openRenameModal(id, defaultName, async () => {
         const label = { id, name: renameInput.value.trim() || defaultName, dataUrl };
         labels.push(label);
-        saveLabels();
+        await saveLabelsToDB();
         renderLabelsGrid();
         resolve();
       });
@@ -346,7 +367,7 @@ async function addLabelsBatch(files) {
     }
   }
 
-  saveLabels();
+  saveLabelsToDB();
   renderLabelsGrid();
   hideProgress();
 
@@ -392,18 +413,18 @@ labelsGrid.addEventListener('click', (e) => {
   if (action === 'preview') openPreview(id);
   if (action === 'rename') {
     const label = labels.find(l => l.id === id);
-    if (label) openRenameModal(id, label.name, () => {
+    if (label) openRenameModal(id, label.name, async () => {
       label.name = renameInput.value.trim() || label.name;
-      saveLabels();
+      await saveLabelsToDB();
       renderLabelsGrid();
     });
   }
   if (action === 'delete') deleteLabel(id);
 });
 
-function deleteLabel(id) {
+async function deleteLabel(id) {
   labels = labels.filter(l => l.id !== id);
-  saveLabels();
+  await saveLabelsToDB();
   clearCachedPDFsForLabel(id); // limpa PDFs em cache dessa etiqueta
   renderLabelsGrid();
 }
@@ -412,7 +433,7 @@ clearAll.addEventListener('click', () => {
   if (labels.length === 0) return;
   if (confirm('Remover todas as etiquetas salvas?')) {
     labels = [];
-    saveLabels();
+    await saveLabelsToDB();
     clearAllCachedPDFs(); // limpa todos os PDFs em cache
     renderLabelsGrid();
   }
@@ -891,6 +912,7 @@ function escHtml(str) {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
-loadLabels();
-renderLabelsGrid();
+loadLabelsFromDB().then(() => {
+  renderLabelsGrid();
+});
 chatInput.focus();
