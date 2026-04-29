@@ -925,6 +925,7 @@ function appendAssistantMessage(html, className = 'assistant') {
   `;
   chatArea.appendChild(div);
   scrollChat();
+  return div;
 }
 
 function scrollChat() {
