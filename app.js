@@ -907,7 +907,28 @@ function sleep(ms) {
 }
 
 function escHtml(str) {
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  if (!str) return '';
+  return str.toString()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function appendAssistantMessage(html, className = 'assistant') {
+  const div = document.createElement('div');
+  div.className = `chat-message ${className}`;
+  div.innerHTML = `
+    <div class="avatar">${className === 'error-bubble' ? '⚠️' : '🤖'}</div>
+    <div class="bubble">${html}</div>
+  `;
+  chatArea.appendChild(div);
+  scrollChat();
+}
+
+function scrollChat() {
+  chatArea.scrollTop = chatArea.scrollHeight;
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
