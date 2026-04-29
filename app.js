@@ -192,6 +192,10 @@ const chatArea       = document.getElementById('chatArea');
 const chatInput      = document.getElementById('chatInput');
 const sendBtn        = document.getElementById('sendBtn');
 const statusDot      = document.getElementById('statusDot');
+const clearConfirmInput = document.getElementById('clearConfirmInput');
+const btnExportBackup = document.getElementById('btnExportBackup');
+const btnImportBackup = document.getElementById('btnImportBackup');
+const importInput     = document.getElementById('importInput');
 const renameModal    = document.getElementById('renameModal');
 const renameInput    = document.getElementById('renameInput');
 const cancelRename   = document.getElementById('cancelRename');
@@ -491,6 +495,10 @@ async function deleteLabel(id) {
 settingsBtn.addEventListener('click', () => {
   settingsModal.hidden = false;
   clearConfirmBox.hidden = true; // reset confirmation state
+  clearConfirmInput.value = ''; // clear input
+  confirmClearBtn.disabled = true;
+  confirmClearBtn.style.opacity = '0.5';
+  confirmClearBtn.style.cursor = 'not-allowed';
 });
 
 closeSettings.addEventListener('click', () => {
@@ -507,13 +515,99 @@ btnDangerClearAll.addEventListener('click', () => {
     return;
   }
   clearConfirmBox.hidden = false;
+  setTimeout(() => clearConfirmInput.focus(), 100);
+});
+
+// Backup & Restore listeners
+btnExportBackup.addEventListener('click', () => {
+  if (labels.length === 0) {
+    alert('Não há etiquetas para exportar.');
+    return;
+  }
+  downloadBackup();
+});
+
+btnImportBackup.addEventListener('click', () => {
+  importInput.click();
+});
+
+importInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = async (event) => {
+    try {
+      const importedData = JSON.parse(event.target.result);
+      
+      if (!Array.isArray(importedData)) {
+        throw new Error('Formato inválido: o arquivo deve ser uma lista de etiquetas.');
+      }
+
+      // Basic validation of content
+      const validLabels = importedData.filter(item => item.name && item.dataUrl);
+      
+      if (validLabels.length === 0) {
+        throw new Error('Nenhuma etiqueta válida encontrada no arquivo.');
+      }
+
+      // Merge avoiding exact duplicates (by name and content)
+      let addedCount = 0;
+      for (const newLabel of validLabels) {
+        const isDuplicate = labels.some(l => 
+          l.name.toLowerCase() === newLabel.name.toLowerCase() && 
+          l.dataUrl.length === newLabel.dataUrl.length
+        );
+
+        if (!isDuplicate) {
+          // Force a new ID to avoid collisions with existing ones
+          labels.push({
+            id: crypto.randomUUID(),
+            name: newLabel.name,
+            dataUrl: newLabel.dataUrl
+          });
+          addedCount++;
+        }
+      }
+
+      if (addedCount > 0) {
+        await saveLabelsToDB();
+        renderLabelsGrid();
+        settingsModal.hidden = true;
+        appendAssistantMessage(`<p>📥 Importação concluída!</p><p>✅ <strong>${addedCount}</strong> nova${addedCount !== 1 ? 's' : ''} etiqueta${addedCount !== 1 ? 's' : ''} adicionada${addedCount !== 1 ? 's' : ''} à sua biblioteca.</p>`);
+      } else {
+        alert('Todas as etiquetas do arquivo já existem na sua biblioteca.');
+      }
+
+    } catch (err) {
+      console.error('Erro na importação:', err);
+      alert('Erro ao importar arquivo: ' + err.message);
+    }
+    importInput.value = ''; // reset
+  };
+  reader.readAsText(file);
+});
+
+// Typing validation logic
+clearConfirmInput.addEventListener('input', () => {
+  const isMatch = clearConfirmInput.value.trim().toUpperCase() === 'APAGAR';
+  confirmClearBtn.disabled = !isMatch;
+  confirmClearBtn.style.opacity = isMatch ? '1' : '0.5';
+  confirmClearBtn.style.cursor = isMatch ? 'pointer' : 'not-allowed';
 });
 
 cancelClearBtn.addEventListener('click', () => {
   clearConfirmBox.hidden = true;
+  clearConfirmInput.value = '';
 });
 
 confirmClearBtn.addEventListener('click', async () => {
+  if (clearConfirmInput.value.trim().toUpperCase() !== 'APAGAR') return;
+
+  // 1. Create a safety backup before deleting
+  downloadBackup();
+  
+  // 2. Proceed with deletion
   labels = [];
   await saveLabelsToDB();
   clearAllCachedPDFs();
@@ -522,8 +616,27 @@ confirmClearBtn.addEventListener('click', async () => {
   clearConfirmBox.hidden = true;
   settingsModal.hidden = true;
   
-  appendAssistantMessage('<p>🗑️ Todas as etiquetas e caches foram apagados com sucesso.</p>');
+  appendAssistantMessage('<p>🗑️ Todas as etiquetas e caches foram apagados com sucesso.</p><p class="hint-text">💡 Um backup de segurança foi baixado automaticamente em sua pasta de Downloads.</p>');
 });
+
+/**
+ * Downloads a safety JSON backup of all labels
+ */
+function downloadBackup() {
+  if (labels.length === 0) return;
+  
+  const data = JSON.stringify(labels, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const date = new Date().toISOString().split('T')[0];
+  
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `etiquetafit_backup_seguranca_${date}.json`;
+  a.click();
+  
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 // ─── Preview modal ────────────────────────────────────────────────────────────
 

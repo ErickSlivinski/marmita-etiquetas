@@ -139,17 +139,29 @@
       </div>
       
       <div style="margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px;">
+        <h4 style="font-size: 14px; margin-bottom: 8px; color: var(--accent-light);">Backup e Restauração</h4>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Salve sua biblioteca localmente ou restaure etiquetas de um arquivo anterior.</p>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-secondary" id="btnExportBackup" style="flex: 1; font-size: 12px; padding: 8px;">📤 Exportar JSON</button>
+          <button class="btn-secondary" id="btnImportBackup" style="flex: 1; font-size: 12px; padding: 8px;">📥 Importar JSON</button>
+        </div>
+        <input type="file" id="importInput" accept=".json" hidden />
+      </div>
+
+      <div style="margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px;">
         <h4 style="font-size: 14px; margin-bottom: 8px; color: var(--red);">Zona de Perigo</h4>
-        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Esta ação irá apagar todas as etiquetas salvas, além do cache de PDFs. Não é possível desfazer.</p>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Esta ação irá apagar todas as etiquetas salvas, além do cache de PDFs.</p>
         <button class="btn-danger" id="btnDangerClearAll">🗑️ Apagar Todas as Etiquetas</button>
       </div>
 
       <!-- Confirmation state (hidden by default) -->
       <div id="clearConfirmBox" style="margin-top: 12px; padding: 12px; background: var(--red-dim); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: var(--radius-sm);" hidden>
-        <p style="font-size: 13px; color: var(--red); font-weight: bold; margin-bottom: 8px;">Tem certeza absoluta?</p>
+        <p style="font-size: 13px; color: var(--red); font-weight: bold; margin-bottom: 4px;">Tem certeza absoluta?</p>
+        <p style="font-size: 11px; color: var(--text-secondary); margin-bottom: 8px;">Digite <strong style="color: var(--red)">APAGAR</strong> para confirmar:</p>
+        <input type="text" id="clearConfirmInput" class="modal-input" style="margin-bottom: 12px; border-color: rgba(239, 68, 68, 0.3);" placeholder="Digite aqui..." autocomplete="off" />
         <div style="display: flex; gap: 8px;">
           <button class="btn-secondary" id="cancelClearBtn" style="flex: 1; padding: 6px;">Cancelar</button>
-          <button class="btn-primary" id="confirmClearBtn" style="flex: 1; padding: 6px; background: var(--red); box-shadow: none;">Sim, apagar tudo</button>
+          <button class="btn-primary" id="confirmClearBtn" style="flex: 1; padding: 6px; background: var(--red); box-shadow: none; opacity: 0.5; cursor: not-allowed;" disabled>Sim, apagar tudo</button>
         </div>
       </div>
     </div>
