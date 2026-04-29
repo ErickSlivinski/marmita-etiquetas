@@ -647,15 +647,20 @@ function parseRequest(text) {
   const lower = text.toLowerCase();
   const results = [];
 
-  // Pattern 1: "N folha(s) de/do/da LABEL"
-  // Pattern 2: "LABEL — N folha(s)"
-  // We split by connectors (e e, mais, vírgula) to handle multiple requests
+  const qtyRegexStr = '\\d+|uma?|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez';
 
-  // First, normalise separators
-  const normalised = lower
-    .replace(/\be\s+(\d)/g, '&&$1')   // "e 2 folhas" -> "&&2 folhas"
-    .replace(/,\s*(\d)/g, '&&$1')     // ", 2 folhas" -> "&&2 folhas"
-    .replace(/\s+mais\s+/g, '&&');    // "mais 2" -> "&&2"
+  // Normalise separators to &&
+  let normalised = lower
+    .replace(new RegExp(`\\be\\s+(${qtyRegexStr})\\s+folhas?\\b`, 'gi'), '&&$1 folhas')
+    .replace(new RegExp(`,\\s*(${qtyRegexStr})\\s+folhas?\\b`, 'gi'), '&&$1 folhas')
+    .replace(/\s+mais\s+/gi, '&&');
+
+  // Catch missing commas (e.g., "carne duas folhas" -> "carne &&duas folhas")
+  // We ignore it if preceded by a dash or colon to preserve "Label - 2 folhas" format
+  normalised = normalised.replace(new RegExp(`([^\\-–—:])\\s+(${qtyRegexStr})\\s+folhas?\\b`, 'gi'), '$1&&$2 folhas');
+
+  // Clean up any double &&
+  normalised = normalised.replace(/&&+/g, '&&');
 
   const parts = normalised.split('&&');
 
@@ -683,28 +688,32 @@ function extractLabelRequest(part) {
   let labelPart = part;
 
   // Try "N folha(s) ..." — number at start
-  let m = part.match(/^(?:quero|preciso\s+de|me\s+d[eêá]|gera|gerar|fazer|fa[cç]a|imprimir)?\s*(\d+|[a-zêáãçé]+)\s+folha[s]?\s+(?:de|do|da|das|dos)?\s*(.*)/);
+  let m = part.match(/^(?:quer|quero|gostaria|preciso\s+de|me\s+d[eêá]|gera|gerar|fazer|fa[cç]a|imprimir)?\s*(\d+|[a-zêáãçé]+)\s+folha[s]?\s+(?:de|do|da|das|dos)?\s*(.*)/i);
   if (m) {
-    const rawQty = m[1];
+    const rawQty = m[1].toLowerCase();
     sheets = parseInt(rawQty) || qtyWords[rawQty] || 1;
     labelPart = m[2].trim();
   }
 
   // Try "... — N folha(s)" — number at end
   if (!sheets) {
-    m = part.match(/(.+?)\s+[-–—]\s*(\d+)\s+folha[s]?/);
+    m = part.match(/(.+?)\s+[-–—]\s*(\d+|[a-zêáãçé]+)\s+folha[s]?/i);
     if (m) {
       labelPart = m[1].trim();
-      sheets = parseInt(m[2]);
+      const rawQty = m[2].toLowerCase();
+      sheets = parseInt(rawQty) || qtyWords[rawQty];
     }
   }
 
   // Fallback: just a number somewhere
   if (!sheets) {
-    m = part.match(/(\d+)\s+folha[s]?/);
+    m = part.match(/(\d+|[a-zêáãçé]+)\s+folha[s]?/i);
     if (m) {
-      sheets = parseInt(m[1]);
-      labelPart = part.replace(m[0], '').trim();
+      const rawQty = m[1].toLowerCase();
+      sheets = parseInt(rawQty) || qtyWords[rawQty];
+      if (sheets) {
+        labelPart = part.replace(m[0], '').trim();
+      }
     }
   }
 
@@ -712,8 +721,8 @@ function extractLabelRequest(part) {
 
   // Clean label name
   const cleaned = labelPart
-    .replace(/^(de|do|da|das|dos|etiqueta|etiquetas|marmita|do\s+|da\s+)\s*/gi, '')
-    .replace(/[.,;!?]+$/, '')
+    .replace(/^(de|do|da|das|dos|etiqueta|etiquetas|marmita|do\s+|da\s+|e\s+)\s*/gi, '')
+    .replace(/(?:\s+e|\s+mais|\s+ou|[.,;!?]+)$/gi, '')
     .trim();
 
   if (!cleaned) return null;
