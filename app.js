@@ -254,6 +254,12 @@ async function processFiles(files) {
     await addLabelsBatch(imageFiles);
   }
 
+  // Terminate worker if it was created
+  if (tesseractWorker) {
+    await tesseractWorker.terminate();
+    tesseractWorker = null;
+  }
+
   if (!zipFiles.length && !imageFiles.length) {
     appendAssistantMessage('<p>⚠️ Nenhum arquivo de imagem ou .zip encontrado. Envie arquivos PNG, JPG, WEBP ou um .zip contendo imagens.</p>', 'error-bubble');
   }
@@ -291,7 +297,10 @@ async function processZip(zipFile) {
 
       // Extract name from file path inside zip
       const fileName = path.split('/').pop();
-      const name = fileName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+      const fallbackName = fileName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+
+      showProgress(`Lendo texto: ${fallbackName}...`, ((i) / imageEntries.length) * 100);
+      const name = await extractLabelName(dataUrl, fallbackName);
 
       // Check for duplicates by name
       if (!labels.some(l => l.name.toLowerCase() === name.toLowerCase())) {
@@ -322,23 +331,28 @@ function blobToDataUrl(blob) {
 }
 
 // Single file upload — shows rename modal
-function addLabelWithRename(file) {
-  return new Promise((resolve) => {
+async function addLabelWithRename(file) {
+  const dataUrl = await new Promise((resolve) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = e.target.result;
-      const id = crypto.randomUUID();
-      const defaultName = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
-
-      openRenameModal(id, defaultName, async () => {
-        const label = { id, name: renameInput.value.trim() || defaultName, dataUrl };
-        labels.push(label);
-        await saveLabelsToDB();
-        renderLabelsGrid();
-        resolve();
-      });
-    };
+    reader.onload = (e) => resolve(e.target.result);
     reader.readAsDataURL(file);
+  });
+
+  const id = crypto.randomUUID();
+  const fallbackName = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+
+  showProgress("Lendo texto da etiqueta com IA...", 50);
+  const suggestedName = await extractLabelName(dataUrl, fallbackName);
+  hideProgress();
+
+  return new Promise((resolve) => {
+    openRenameModal(id, suggestedName, async () => {
+      const label = { id, name: renameInput.value.trim() || suggestedName, dataUrl };
+      labels.push(label);
+      await saveLabelsToDB();
+      renderLabelsGrid();
+      resolve();
+    });
   });
 }
 
@@ -358,7 +372,10 @@ async function addLabelsBatch(files) {
     });
 
     const id = crypto.randomUUID();
-    const name = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+    const fallbackName = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+
+    showProgress(`Lendo etiqueta ${i+1} de ${files.length}...`, ((i) / files.length) * 100);
+    const name = await extractLabelName(dataUrl, fallbackName);
 
     // Skip duplicates
     if (!labels.some(l => l.name.toLowerCase() === name.toLowerCase())) {
@@ -372,6 +389,40 @@ async function addLabelsBatch(files) {
   hideProgress();
 
   appendAssistantMessage(`<p>📤 Upload em lote concluído!</p><p>✅ <strong>${added}</strong> etiqueta${added !== 1 ? 's' : ''} adicionada${added !== 1 ? 's' : ''}.</p><p class="hint-text">💡 Renomeie qualquer etiqueta clicando no ✏️ na sidebar.</p>`);
+}
+
+// ─── OCR Helper ───────────────────────────────────────────────────────────────
+
+let tesseractWorker = null;
+
+async function getTesseractWorker() {
+  if (!tesseractWorker) {
+    tesseractWorker = await Tesseract.createWorker('por');
+  }
+  return tesseractWorker;
+}
+
+async function extractLabelName(dataUrl, fallbackName) {
+  try {
+    const worker = await getTesseractWorker();
+    const { data: { text } } = await worker.recognize(dataUrl);
+    
+    // Clean text: remove newlines, multiple spaces, keep only meaningful lines
+    const lines = text.split('\n')
+      .map(l => l.trim().replace(/\s+/g, ' '))
+      .filter(l => l.length > 2);
+      
+    if (lines.length > 0) {
+      // Use up to the first 2 lines (usually title and sub-title)
+      let name = lines.slice(0, 2).join(' - ');
+      // Title Case
+      name = name.toLowerCase().replace(/(^\w|\s\w|[-]\w)/g, m => m.toUpperCase());
+      return name;
+    }
+  } catch (e) {
+    console.warn("OCR Error:", e);
+  }
+  return fallbackName;
 }
 
 // ─── Labels Grid ──────────────────────────────────────────────────────────────
