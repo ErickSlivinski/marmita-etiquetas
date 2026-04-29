@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Etiquetas Fit — Gerador de Folhas</title>
+  <meta name="description" content="Gerador automático de folhas de etiquetas A4 para marmitas congeladas. Faça upload das etiquetas e gere PDFs prontos para impressão." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <div class="logo-icon">🏷️</div>
+        <div class="logo-text">
+          <span class="logo-title">EtiquetaFit</span>
+          <span class="logo-sub">Gerador de Folhas</span>
+        </div>
+      </div>
+      <button class="sidebar-toggle" id="sidebarToggle" aria-label="Fechar menu">✕</button>
+    </div>
+
+    <div class="sidebar-section">
+      <h2 class="section-title">📤 Upload de Etiquetas</h2>
+      <div class="upload-area" id="uploadArea">
+        <div class="upload-icon">🖼️</div>
+        <p class="upload-text">Arraste arquivos aqui<br />ou clique para selecionar</p>
+        <p class="upload-hint">PNG, JPG, WEBP (6×3cm)</p>
+        <input type="file" id="fileInput" accept="image/*" multiple hidden />
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-header">
+        <h2 class="section-title">🗂️ Etiquetas Salvas</h2>
+        <span class="badge" id="labelCount">0</span>
+      </div>
+      <div class="labels-grid" id="labelsGrid">
+        <div class="empty-state">
+          <span>Nenhuma etiqueta ainda</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <button class="btn-danger" id="clearAll">🗑️ Limpar Tudo</button>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main">
+    <header class="topbar">
+      <button class="menu-btn" id="menuBtn" aria-label="Abrir menu">☰</button>
+      <div class="topbar-center">
+        <h1 class="topbar-title">EtiquetaFit</h1>
+        <span class="topbar-sub">Assistente de Impressão</span>
+      </div>
+      <div class="topbar-actions">
+        <div class="status-dot" id="statusDot" title="Pronto"></div>
+      </div>
+    </header>
+
+    <!-- Chat area -->
+    <section class="chat-area" id="chatArea" aria-live="polite">
+      <!-- Welcome message -->
+      <div class="chat-message assistant" id="welcomeMsg">
+        <div class="avatar">🤖</div>
+        <div class="bubble">
+          <p>Olá! Sou seu assistente de etiquetas. 👋</p>
+          <p>Faça o upload das suas etiquetas no painel ao lado e depois me diga o que precisa. Por exemplo:</p>
+          <div class="examples">
+            <button class="example-chip" data-example="Quero 2 folhas do escondidinho de mandioquinha">💬 "Quero 2 folhas do escondidinho de mandioquinha"</button>
+            <button class="example-chip" data-example="Preciso de 3 folhas do filé de frango à parmegiana">💬 "Preciso de 3 folhas do filé de frango"</button>
+            <button class="example-chip" data-example="1 folha de frango com legumes">💬 "1 folha de frango com legumes"</button>
+          </div>
+          <p class="hint-text">💡 Você também pode pedir múltiplas etiquetas de uma vez, como:<br /><em>"2 folhas do escondidinho e 3 do frango"</em></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Input area -->
+    <footer class="input-area">
+      <div class="input-wrapper">
+        <textarea
+          id="chatInput"
+          class="chat-input"
+          placeholder="Ex: quero 2 folhas do escondidinho de mandioquinha..."
+          rows="1"
+          aria-label="Digite seu pedido"
+        ></textarea>
+        <button class="send-btn" id="sendBtn" aria-label="Enviar pedido">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+      <p class="input-hint">Pressione <kbd>Enter</kbd> para enviar · <kbd>Shift+Enter</kbd> para nova linha</p>
+    </footer>
+  </main>
+
+  <!-- Rename modal -->
+  <div class="modal-overlay" id="renameModal" hidden>
+    <div class="modal">
+      <h3>✏️ Renomear Etiqueta</h3>
+      <p class="modal-sub">Dê um nome descritivo para facilitar a busca no chat</p>
+      <input type="text" id="renameInput" class="modal-input" placeholder="Ex: Escondidinho de Mandioquinha" />
+      <div class="modal-actions">
+        <button class="btn-secondary" id="cancelRename">Cancelar</button>
+        <button class="btn-primary" id="confirmRename">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preview modal -->
+  <div class="modal-overlay" id="previewModal" hidden>
+    <div class="modal modal-large">
+      <div class="modal-header">
+        <h3>👁️ Prévia da Etiqueta</h3>
+        <button class="close-btn" id="closePreview">✕</button>
+      </div>
+      <div class="preview-container">
+        <img id="previewImg" src="" alt="Prévia da etiqueta" />
+      </div>
+      <p id="previewName" class="preview-name"></p>
+    </div>
+  </div>
+
+  <!-- Progress overlay -->
+  <div class="progress-overlay" id="progressOverlay" hidden>
+    <div class="progress-card">
+      <div class="spinner"></div>
+      <p class="progress-text" id="progressText">Gerando PDF...</p>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
