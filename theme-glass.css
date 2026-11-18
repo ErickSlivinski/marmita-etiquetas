@@ -1,0 +1,452 @@
+/* =============================================
+   EtiquetaFit — Tema "Glass Analytics"
+   Carregar DEPOIS de style.css:
+   <link rel="stylesheet" href="style.css" />
+   <link rel="stylesheet" href="theme-glass.css" />
+   Só altera aparência (cores, vidro, sombras, raios).
+   Para voltar ao visual antigo, remova a linha do <link>.
+   ============================================= */
+
+:root {
+  --bg-canvas: #eef5f6;
+  --bg-subtle: rgba(15, 118, 110, 0.06);
+  --bg-hover: rgba(15, 118, 110, 0.10);
+
+  --accent: #0f766e;
+  --accent-hover: #0b5f58;
+  --accent-grad: linear-gradient(135deg, #0d9488 0%, #0891b2 100%);
+  --accent-soft: rgba(13, 148, 136, 0.12);
+  --accent-border: rgba(13, 148, 136, 0.45);
+
+  --border: rgba(15, 23, 42, 0.08);
+  --border-strong: rgba(15, 23, 42, 0.16);
+
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+
+  --glass: rgba(255, 255, 255, 0.66);
+  --glass-strong: rgba(255, 255, 255, 0.86);
+  --glass-edge: rgba(255, 255, 255, 0.85);
+  --glass-blur: saturate(160%) blur(18px);
+  --glass-shadow: 0 8px 28px rgba(15, 60, 70, 0.08), 0 1px 0 rgba(255, 255, 255, 0.7) inset;
+  --glass-shadow-hover: 0 16px 40px rgba(15, 60, 70, 0.14), 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+
+  --shadow-drawer: -18px 0 56px rgba(15, 40, 60, 0.18);
+  --shadow-modal: 0 28px 70px rgba(15, 40, 60, 0.28);
+}
+
+/* ---------- Fundo: malha de gradientes suaves ---------- */
+html, body {
+  background-color: var(--bg-canvas);
+}
+
+body {
+  background-image:
+    radial-gradient(900px 520px at 8% -6%, rgba(45, 212, 191, 0.30), transparent 60%),
+    radial-gradient(760px 520px at 96% 4%, rgba(56, 189, 248, 0.26), transparent 62%),
+    radial-gradient(900px 600px at 70% 108%, rgba(163, 230, 53, 0.20), transparent 60%),
+    radial-gradient(700px 500px at -4% 96%, rgba(99, 102, 241, 0.14), transparent 60%);
+  background-attachment: fixed;
+}
+
+/* ---------- Superfícies de vidro ---------- */
+.sidebar,
+.topbar {
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-color: var(--glass-edge);
+}
+
+.sidebar {
+  border-right: 1px solid var(--glass-edge);
+  box-shadow: 8px 0 32px rgba(15, 60, 70, 0.05);
+}
+
+.topbar {
+  border-bottom: 1px solid var(--glass-edge);
+  box-shadow: 0 8px 28px rgba(15, 60, 70, 0.05);
+}
+
+.sidebar-brand,
+.sidebar-footer {
+  border-color: rgba(15, 23, 42, 0.06);
+}
+
+.brand-wordmark svg {
+  padding: 5px;
+  box-sizing: content-box;
+  width: 22px;
+  height: 22px;
+  color: #ffffff;
+  background: var(--accent-grad);
+  border-radius: 10px;
+  box-shadow: 0 6px 16px rgba(13, 148, 136, 0.35);
+}
+
+.topbar-title {
+  letter-spacing: -0.02em;
+}
+
+/* ---------- Busca ---------- */
+.search-input {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--glass-edge);
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(15, 60, 70, 0.05) inset;
+}
+
+.search-input:focus {
+  background: #ffffff;
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+/* ---------- Botões ---------- */
+.btn-primary,
+.checkout-trigger-btn {
+  background: var(--accent-grad);
+  border: none;
+  border-radius: 999px;
+  color: #ffffff;
+  box-shadow: 0 8px 20px rgba(13, 148, 136, 0.32);
+  transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease), filter 0.18s var(--ease);
+}
+
+.btn-primary:hover,
+.checkout-trigger-btn:hover {
+  background: var(--accent-grad);
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  box-shadow: 0 12px 26px rgba(13, 148, 136, 0.4);
+}
+
+.btn-primary:active,
+.checkout-trigger-btn:active {
+  transform: translateY(0);
+}
+
+.btn-primary:disabled {
+  box-shadow: none;
+  transform: none;
+}
+
+.checkout-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  border-radius: 999px;
+}
+
+.btn-secondary,
+.btn-secondary-sm,
+.btn-ghost-sm,
+.sort-select,
+.sidebar-util-btn {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--glass-edge);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(15, 60, 70, 0.05);
+}
+
+.btn-secondary:hover,
+.btn-secondary-sm:hover,
+.btn-ghost-sm:hover,
+.sidebar-util-btn:hover {
+  background: #ffffff;
+  border-color: var(--accent-border);
+}
+
+.icon-btn {
+  border-radius: 12px;
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+}
+
+.text-input {
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+}
+
+.text-input:focus {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+/* ---------- Upload ---------- */
+.upload-dropzone {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1.5px dashed rgba(13, 148, 136, 0.45);
+  border-radius: var(--radius-md);
+}
+
+.upload-dropzone svg {
+  padding: 7px;
+  box-sizing: content-box;
+  width: 20px;
+  height: 20px;
+  color: #ffffff;
+  background: var(--accent-grad);
+  border-radius: 12px;
+}
+
+.upload-dropzone:hover,
+.upload-dropzone.drag-over {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 10px 26px rgba(13, 148, 136, 0.16);
+}
+
+/* ---------- Categorias e filtros ---------- */
+.cat-nav-btn {
+  border-radius: 14px;
+}
+
+.cat-nav-btn:hover {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.cat-nav-btn.active {
+  background: var(--glass-strong);
+  color: var(--accent);
+  box-shadow: var(--glass-shadow);
+  border: 1px solid var(--glass-edge);
+}
+
+.cat-nav-count {
+  border-radius: 999px;
+}
+
+.filter-tab-btn {
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid var(--glass-edge);
+  border-radius: 999px;
+}
+
+.filter-tab-btn:hover {
+  background: #ffffff;
+}
+
+.filter-tab-btn.active {
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: 0 8px 20px rgba(13, 148, 136, 0.28);
+}
+
+/* ---------- Cards das etiquetas ---------- */
+.label-card {
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-shadow);
+  transition: transform 0.22s var(--ease), box-shadow 0.22s var(--ease), border-color 0.22s var(--ease);
+}
+
+.label-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(255, 255, 255, 1);
+  box-shadow: var(--glass-shadow-hover);
+}
+
+.label-card.selected {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--glass-shadow-hover);
+}
+
+.card-preview-btn {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.5), rgba(13, 148, 136, 0.07));
+  border-bottom: 1px solid rgba(15, 23, 42, 0.05);
+  padding: 12px;
+}
+
+/* a etiqueta aparece como um "papel" sobre o vidro */
+.card-preview-btn img {
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(15, 40, 60, 0.14);
+}
+
+.btn-add-label {
+  border-radius: 999px;
+}
+
+.qty-stepper {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--glass-edge);
+  overflow: hidden;
+}
+
+/* ---------- Checkout (drawer) ---------- */
+.drawer-overlay,
+.modal-overlay {
+  background: rgba(10, 30, 40, 0.38);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.checkout-drawer {
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-left: 1px solid var(--glass-edge);
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+
+/* os 3 números viram cartões de KPI */
+.checkout-metrics {
+  gap: 10px;
+  padding: 14px 18px;
+  background: transparent;
+  border-color: rgba(15, 23, 42, 0.06);
+}
+
+.metric-cell {
+  background: var(--glass);
+  border: 1px solid var(--glass-edge) !important;
+  border-radius: var(--radius-md);
+  box-shadow: var(--glass-shadow);
+  padding: 10px 12px;
+}
+
+.metric-value {
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.checkout-item {
+  border-radius: var(--radius-md);
+}
+
+.checkout-thumb {
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(15, 40, 60, 0.12);
+}
+
+.export-success-box {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+}
+
+.drawer-footer {
+  background: rgba(255, 255, 255, 0.5);
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+/* ---------- Modais ---------- */
+.modal {
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  border-radius: 26px;
+}
+
+.modal-thumb-wrap,
+.preview-container {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.5), rgba(13, 148, 136, 0.08));
+  border-radius: var(--radius-md);
+}
+
+.modal-thumb-wrap img,
+.preview-container img {
+  background: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(15, 40, 60, 0.18);
+}
+
+.settings-section {
+  border-color: rgba(15, 23, 42, 0.07);
+}
+
+.clear-confirm-box,
+.cat-manager-row {
+  border-radius: var(--radius-sm);
+}
+
+/* ---------- Progresso e avisos ---------- */
+.progress-overlay {
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.progress-card,
+.toast-item {
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-md);
+  box-shadow: var(--glass-shadow-hover);
+}
+
+.progress-bar {
+  background: var(--accent-grad);
+  border-radius: 999px;
+}
+
+.progress-bar-wrap {
+  border-radius: 999px;
+}
+
+.empty-catalog-inner {
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glass-shadow);
+  padding: 32px 28px;
+}
+
+/* ---------- Scroll discreto ---------- */
+.catalog-main,
+.drawer-body,
+.category-nav {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 118, 110, 0.3) transparent;
+}
+
+/* ---------- Celular: vidro mais opaco (legibilidade) ---------- */
+@media (max-width: 960px) {
+  .sidebar {
+    background: rgba(255, 255, 255, 0.94);
+  }
+  .topbar {
+    background: rgba(255, 255, 255, 0.82);
+  }
+  .checkout-drawer {
+    border-radius: 0;
+  }
+}
+
+/* ---------- Navegadores sem blur ---------- */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --glass: rgba(255, 255, 255, 0.94);
+    --glass-strong: #ffffff;
+  }
+}
+
+/* ---------- Menos movimento ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .label-card,
+  .btn-primary,
+  .checkout-trigger-btn {
+    transition: none;
+  }
+  .label-card:hover,
+  .btn-primary:hover,
+  .checkout-trigger-btn:hover {
+    transform: none;
+  }
+}
