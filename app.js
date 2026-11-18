@@ -1,228 +1,591 @@
 /**
- * EtiquetaFit — App Logic
- * Frozen meal label sheet generator
- * Layout: A4 landscape, 4 cols × 6 rows = 24 labels per sheet
- * Label size: 60mm × 30mm (6cm × 3cm)
+ * EtiquetaFit — Dashboard & Label Marketplace Controller
+ * A4 landscape PDF export: 4 cols × 6 rows = 24 labels per sheet (60×30mm nominal)
  */
 
-'use strict';
+import {
+  DEFAULT_CATEGORIES,
+  LABELS_PER_SHEET,
+  MAX_SHEETS_PER_LABEL,
+  cleanOcrLabelName,
+  inferCategoryFromText,
+  filterAndSortLabels,
+  getCategoryCounts,
+  clampSheets,
+  calculateCheckoutSummary,
+  createCategorySlug,
+  validateBackupPayload
+} from './lib/catalog.js';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+import {
+  loadLabels,
+  saveLabels,
+  loadCategories,
+  saveCategories,
+  loadCart,
+  saveCart,
+  clearAllStorage
+} from './lib/storage.js';
 
-// A4 landscape in mm
+import { generateDemoLabels } from './lib/demoLabels.js';
+
+// ─── PDF Layout Constants ────────────────────────────────────────────────────
+
 const A4_W_MM = 297;
 const A4_H_MM = 210;
-
-// Grid: 4 columns × 6 rows = 24 labels
 const COLS = 4;
 const ROWS = 6;
-const LABELS_PER_SHEET = COLS * ROWS;
-
-// Minimal safe margin for printers (5mm each side)
 const MARGIN_MM = 5;
+const LABEL_W_MM = (A4_W_MM - 2 * MARGIN_MM) / COLS;
+const LABEL_H_MM = (A4_H_MM - 2 * MARGIN_MM) / ROWS;
 
-// Labels scaled to fill the page (minus margins)
-const LABEL_W_MM = (A4_W_MM - 2 * MARGIN_MM) / COLS;  // ~71.75mm
-const LABEL_H_MM = (A4_H_MM - 2 * MARGIN_MM) / ROWS;  // ~33.33mm
-const MARGIN_X_MM = MARGIN_MM;
-const MARGIN_Y_MM = MARGIN_MM;
+// Configure PDF.js worker if loaded
+if (window.pdfjsLib) {
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
 
-// ─── State ────────────────────────────────────────────────────────────────────
+// ─── Application State ───────────────────────────────────────────────────────
 
-/** @type {Array<{id: string, name: string, dataUrl: string}>} */
 let labels = [];
+let categories = [];
+let cart = {}; // { [labelId]: numberOfSheets }
+let activeCategoryId = 'all';
+let searchQuery = '';
+let sortBy = 'name-asc';
+let activeEditContext = null; // { mode: 'edit' | 'create', labelId?, dataUrl?, resolve? }
+let activePreviewId = null;
+let lastGeneratedPdfUrl = null;
+let tesseractWorker = null;
 
-let pendingRenameId = null;
+// ─── DOM References ──────────────────────────────────────────────────────────
 
-// Removed localStorage persistence in favor of IndexedDB
-const STORAGE_KEY = 'etiquetafit_labels';
+const sidebar = document.getElementById('sidebar');
+const sidebarBackdrop = document.getElementById('sidebarBackdrop');
+const menuBtn = document.getElementById('menuBtn');
+const sidebarCloseBtn = document.getElementById('sidebarCloseBtn');
 
-// ─── PDF Cache (IndexedDB) ────────────────────────────────────────────────────
+const uploadArea = document.getElementById('uploadArea');
+const fileInput = document.getElementById('fileInput');
+const categoryNav = document.getElementById('categoryNav');
+const quickFilterStrip = document.getElementById('quickFilterStrip');
+const manageCategoriesBtn = document.getElementById('manageCategoriesBtn');
 
-const PDF_DB_NAME = 'etiquetafit_pdf_cache';
-const PDF_DB_VERSION = 2; // Incremented for labels store
+const activeViewTitle = document.getElementById('activeViewTitle');
+const searchInput = document.getElementById('searchInput');
+const clearSearchBtn = document.getElementById('clearSearchBtn');
+const openCheckoutBtn = document.getElementById('openCheckoutBtn');
+const checkoutCountBadge = document.getElementById('checkoutCountBadge');
 
-function openPdfCacheDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(PDF_DB_NAME, PDF_DB_VERSION);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains('pdfs')) {
-        db.createObjectStore('pdfs', { keyPath: 'key' });
-      }
-      if (!db.objectStoreNames.contains('labels')) {
-        db.createObjectStore('labels', { keyPath: 'id' });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
+const resultsSummary = document.getElementById('resultsSummary');
+const selectionSummary = document.getElementById('selectionSummary');
+const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+const sortSelect = document.getElementById('sortSelect');
+const catalogGrid = document.getElementById('catalogGrid');
+const emptyLibraryState = document.getElementById('emptyLibraryState');
+const emptyFilterState = document.getElementById('emptyFilterState');
+const emptyFilterText = document.getElementById('emptyFilterText');
+const emptyUploadBtn = document.getElementById('emptyUploadBtn');
+const loadDemoBtn = document.getElementById('loadDemoBtn');
+const resetFiltersBtn = document.getElementById('resetFiltersBtn');
 
-async function saveLabelsToDB() {
-  try {
-    const db = await openPdfCacheDB();
-    const tx = db.transaction('labels', 'readwrite');
-    const store = tx.objectStore('labels');
-    
-    // Clear and re-add all (simple approach for sync)
-    await new Promise((resolve, reject) => {
-      const clearReq = store.clear();
-      clearReq.onsuccess = resolve;
-      clearReq.onerror = reject;
-    });
+// Checkout Drawer
+const checkoutOverlay = document.getElementById('checkoutOverlay');
+const closeCheckoutBtn = document.getElementById('closeCheckoutBtn');
+const summaryModels = document.getElementById('summaryModels');
+const summarySheets = document.getElementById('summarySheets');
+const summaryStickers = document.getElementById('summaryStickers');
+const checkoutItemsList = document.getElementById('checkoutItemsList');
+const exportSuccessBox = document.getElementById('exportSuccessBox');
+const exportSuccessMeta = document.getElementById('exportSuccessMeta');
+const exportDownloadAgainLink = document.getElementById('exportDownloadAgainLink');
+const exportFilenameInput = document.getElementById('exportFilenameInput');
+const drawerClearBtn = document.getElementById('drawerClearBtn');
+const generatePdfBtn = document.getElementById('generatePdfBtn');
 
-    for (const label of labels) {
-      store.add(label);
-    }
-    
-    return new Promise((resolve) => {
-      tx.oncomplete = resolve;
-    });
-  } catch (e) {
-    console.error('Erro ao salvar etiquetas no DB:', e);
-  }
-}
+// Edit Label Modal
+const editLabelModal = document.getElementById('editLabelModal');
+const editModalTitle = document.getElementById('editModalTitle');
+const editModalThumb = document.getElementById('editModalThumb');
+const editLabelForm = document.getElementById('editLabelForm');
+const editNameInput = document.getElementById('editNameInput');
+const editCategorySelect = document.getElementById('editCategorySelect');
+const quickNewCatInput = document.getElementById('quickNewCatInput');
+const quickAddCatBtn = document.getElementById('quickAddCatBtn');
+const closeEditModal = document.getElementById('closeEditModal');
+const cancelEditBtn = document.getElementById('cancelEditBtn');
 
-async function loadLabelsFromDB() {
-  try {
-    const db = await openPdfCacheDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('labels', 'readonly');
-      const store = tx.objectStore('labels');
-      const req = store.getAll();
-      req.onsuccess = () => {
-        labels = req.result || [];
-        resolve();
-      };
-      req.onerror = () => reject(req.error);
-    });
-  } catch (e) {
-    console.error('Erro ao carregar etiquetas do DB:', e);
-    labels = [];
-  }
-}
+// Categories Manager Modal
+const categoriesModal = document.getElementById('categoriesModal');
+const closeCategoriesModal = document.getElementById('closeCategoriesModal');
+const addCategoryForm = document.getElementById('addCategoryForm');
+const newCategoryInput = document.getElementById('newCategoryInput');
+const categoriesManagerList = document.getElementById('categoriesManagerList');
 
-async function cachePDF(labelId, sheets, blob, filename) {
-  try {
-    const db = await openPdfCacheDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('pdfs', 'readwrite');
-      const store = tx.objectStore('pdfs');
-      store.put({ key: `${labelId}_${sheets}`, blob, filename, createdAt: Date.now() });
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch (e) {
-    console.warn('Erro ao salvar PDF no cache:', e);
-  }
-}
+// Preview Modal
+const previewModal = document.getElementById('previewModal');
+const previewImg = document.getElementById('previewImg');
+const previewName = document.getElementById('previewName');
+const previewMeta = document.getElementById('previewMeta');
+const closePreview = document.getElementById('closePreview');
+const previewEditBtn = document.getElementById('previewEditBtn');
+const previewAddSheetBtn = document.getElementById('previewAddSheetBtn');
 
-async function getCachedPDF(labelId, sheets) {
-  try {
-    const db = await openPdfCacheDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('pdfs', 'readonly');
-      const store = tx.objectStore('pdfs');
-      const req = store.get(`${labelId}_${sheets}`);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
-  } catch (e) {
-    console.warn('Erro ao buscar PDF no cache:', e);
-    return null;
-  }
-}
-
-async function clearCachedPDFsForLabel(labelId) {
-  try {
-    const db = await openPdfCacheDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('pdfs', 'readwrite');
-      const store = tx.objectStore('pdfs');
-      const req = store.openCursor();
-      req.onsuccess = (e) => {
-        const cursor = e.target.result;
-        if (cursor) {
-          if (cursor.key.startsWith(labelId + '_')) cursor.delete();
-          cursor.continue();
-        } else {
-          resolve();
-        }
-      };
-      req.onerror = () => reject(req.error);
-    });
-  } catch (e) {
-    console.warn('Erro ao limpar cache:', e);
-  }
-}
-
-async function clearAllCachedPDFs() {
-  try {
-    const db = await openPdfCacheDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('pdfs', 'readwrite');
-      const store = tx.objectStore('pdfs');
-      store.clear();
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch (e) {
-    console.warn('Erro ao limpar todo o cache:', e);
-  }
-}
-
-// ─── DOM refs ─────────────────────────────────────────────────────────────────
-
-const sidebar        = document.getElementById('sidebar');
-const sidebarToggle  = document.getElementById('sidebarToggle');
-const menuBtn        = document.getElementById('menuBtn');
-const uploadArea     = document.getElementById('uploadArea');
-const fileInput      = document.getElementById('fileInput');
-const labelsGrid     = document.getElementById('labelsGrid');
-const labelCount     = document.getElementById('labelCount');
-const settingsBtn    = document.getElementById('settingsBtn');
-const settingsModal  = document.getElementById('settingsModal');
-const closeSettings  = document.getElementById('closeSettings');
-const btnDangerClearAll = document.getElementById('btnDangerClearAll');
-const clearConfirmBox = document.getElementById('clearConfirmBox');
-const cancelClearBtn = document.getElementById('cancelClearBtn');
-const confirmClearBtn = document.getElementById('confirmClearBtn');
-const chatArea       = document.getElementById('chatArea');
-const chatInput      = document.getElementById('chatInput');
-const sendBtn        = document.getElementById('sendBtn');
-const statusDot      = document.getElementById('statusDot');
-const clearConfirmInput = document.getElementById('clearConfirmInput');
+// Settings / Backup Modal
+const settingsBtn = document.getElementById('settingsBtn');
+const settingsModal = document.getElementById('settingsModal');
+const closeSettings = document.getElementById('closeSettings');
 const btnExportBackup = document.getElementById('btnExportBackup');
 const btnImportBackup = document.getElementById('btnImportBackup');
-const importInput     = document.getElementById('importInput');
-const renameModal    = document.getElementById('renameModal');
-const renameInput    = document.getElementById('renameInput');
-const cancelRename   = document.getElementById('cancelRename');
-const confirmRename  = document.getElementById('confirmRename');
-const previewModal   = document.getElementById('previewModal');
-const previewImg     = document.getElementById('previewImg');
-const previewName    = document.getElementById('previewName');
-const closePreview   = document.getElementById('closePreview');
+const importInput = document.getElementById('importInput');
+const btnDangerClearAll = document.getElementById('btnDangerClearAll');
+const clearConfirmBox = document.getElementById('clearConfirmBox');
+const clearConfirmInput = document.getElementById('clearConfirmInput');
+const cancelClearBtn = document.getElementById('cancelClearBtn');
+const confirmClearBtn = document.getElementById('confirmClearBtn');
+
+// Progress & Toasts
 const progressOverlay = document.getElementById('progressOverlay');
-const progressText   = document.getElementById('progressText');
-const progressBar    = document.getElementById('progressBar');
+const progressText = document.getElementById('progressText');
+const progressBar = document.getElementById('progressBar');
+const toastRegion = document.getElementById('toastRegion');
 
-// ─── Sidebar toggle ───────────────────────────────────────────────────────────
+// ─── Initialization ──────────────────────────────────────────────────────────
 
-function toggleSidebar() {
-  const isMobile = window.innerWidth <= 768;
-  if (isMobile) {
-    sidebar.classList.toggle('open');
-  } else {
-    sidebar.classList.toggle('collapsed');
+async function init() {
+  const [loadedLabels, loadedCategories, loadedCart] = await Promise.all([
+    loadLabels(),
+    loadCategories(),
+    loadCart()
+  ]);
+
+  categories = loadedCategories.length > 0 ? loadedCategories : [...DEFAULT_CATEGORIES];
+  if (loadedCategories.length === 0) {
+    await saveCategories(categories);
+  }
+
+  labels = loadedLabels.map(l => ({
+    ...l,
+    categoryId: l.categoryId || 'sem-categoria',
+    createdAt: l.createdAt || Date.now()
+  }));
+
+  // Clean cart entries for deleted labels
+  cart = {};
+  for (const [id, qty] of Object.entries(loadedCart || {})) {
+    if (labels.some(l => l.id === id) && clampSheets(qty) > 0) {
+      cart[id] = clampSheets(qty);
+    }
+  }
+
+  // Optional demo auto-seed via ?demo=1 when empty
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('demo') === '1' && labels.length === 0) {
+    labels = generateDemoLabels();
+    await saveLabels(labels);
+  }
+
+  renderAll();
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function getCategoryName(categoryId) {
+  const found = categories.find(c => c.id === categoryId);
+  return found ? found.name : 'Sem Categoria';
+}
+
+function showToast(message, isError = false) {
+  const toast = document.createElement('div');
+  toast.className = `toast-item${isError ? ' error' : ''}`;
+  toast.textContent = message;
+  toastRegion.appendChild(toast);
+  setTimeout(() => {
+    toast.remove();
+  }, 3800);
+}
+
+function showProgress(text, pct = 0) {
+  progressText.textContent = text;
+  progressBar.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+  progressOverlay.hidden = false;
+}
+
+function updateProgress(pct, text) {
+  if (text) progressText.textContent = text;
+  progressBar.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+}
+
+function hideProgress() {
+  progressOverlay.hidden = true;
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function escHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// ─── Responsive Sidebar ──────────────────────────────────────────────────────
+
+function openMobileSidebar() {
+  sidebar.classList.add('open');
+  sidebarBackdrop.hidden = false;
+}
+
+function closeMobileSidebar() {
+  sidebar.classList.remove('open');
+  sidebarBackdrop.hidden = true;
+}
+
+menuBtn.addEventListener('click', openMobileSidebar);
+sidebarCloseBtn.addEventListener('click', closeMobileSidebar);
+sidebarBackdrop.addEventListener('click', closeMobileSidebar);
+
+// ─── Rendering ───────────────────────────────────────────────────────────────
+
+function renderAll() {
+  renderCategoriesNav();
+  renderQuickFilterStrip();
+  renderCatalogGrid();
+  renderCheckoutSummary();
+}
+
+function renderCategoriesNav() {
+  const counts = getCategoryCounts(labels, categories);
+  categoryNav.innerHTML = '';
+
+  const allBtn = document.createElement('button');
+  allBtn.type = 'button';
+  allBtn.className = `cat-nav-btn${activeCategoryId === 'all' ? ' active' : ''}`;
+  allBtn.innerHTML = `
+    <span class="cat-nav-name">Todas as Etiquetas</span>
+    <span class="cat-nav-count tabular-nums">${counts.all || 0}</span>
+  `;
+  allBtn.addEventListener('click', () => {
+    activeCategoryId = 'all';
+    closeMobileSidebar();
+    renderAll();
+  });
+  categoryNav.appendChild(allBtn);
+
+  for (const cat of categories) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `cat-nav-btn${activeCategoryId === cat.id ? ' active' : ''}`;
+    btn.innerHTML = `
+      <span class="cat-nav-name">${escHtml(cat.name)}</span>
+      <span class="cat-nav-count tabular-nums">${counts[cat.id] || 0}</span>
+    `;
+    btn.addEventListener('click', () => {
+      activeCategoryId = cat.id;
+      closeMobileSidebar();
+      renderAll();
+    });
+    categoryNav.appendChild(btn);
+  }
+
+  activeViewTitle.textContent =
+    activeCategoryId === 'all'
+      ? 'Catálogo de Etiquetas'
+      : getCategoryName(activeCategoryId);
+}
+
+function renderQuickFilterStrip() {
+  const counts = getCategoryCounts(labels, categories);
+  quickFilterStrip.innerHTML = '';
+
+  const tabs = [{ id: 'all', name: 'Todas' }, ...categories];
+  for (const tab of tabs) {
+    const count = tab.id === 'all' ? counts.all : (counts[tab.id] || 0);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.role = 'tab';
+    btn.ariaSelected = activeCategoryId === tab.id ? 'true' : 'false';
+    btn.className = `filter-tab-btn${activeCategoryId === tab.id ? ' active' : ''}`;
+    btn.textContent = `${tab.name} (${count})`;
+    btn.addEventListener('click', () => {
+      activeCategoryId = tab.id;
+      renderAll();
+    });
+    quickFilterStrip.appendChild(btn);
   }
 }
 
-menuBtn.addEventListener('click', toggleSidebar);
-sidebarToggle.addEventListener('click', toggleSidebar);
+function renderCatalogGrid() {
+  const enrichedLabels = labels.map(l => ({
+    ...l,
+    categoryName: getCategoryName(l.categoryId)
+  }));
 
-// ─── File Upload ──────────────────────────────────────────────────────────────
+  const visibleLabels = filterAndSortLabels(enrichedLabels, {
+    query: searchQuery,
+    categoryId: activeCategoryId,
+    sortBy,
+    cart
+  });
+
+  resultsSummary.textContent =
+    visibleLabels.length === labels.length
+      ? `${labels.length} ${labels.length === 1 ? 'etiqueta' : 'etiquetas'}`
+      : `${visibleLabels.length} de ${labels.length} etiquetas`;
+
+  catalogGrid.innerHTML = '';
+
+  if (labels.length === 0) {
+    catalogGrid.hidden = true;
+    emptyFilterState.hidden = true;
+    emptyLibraryState.hidden = false;
+    return;
+  }
+
+  emptyLibraryState.hidden = true;
+
+  if (visibleLabels.length === 0) {
+    catalogGrid.hidden = true;
+    emptyFilterState.hidden = false;
+    emptyFilterText.textContent = searchQuery
+      ? `Nenhuma etiqueta encontrada para "${searchQuery}".`
+      : 'Nenhuma etiqueta cadastrada nesta categoria.';
+    return;
+  }
+
+  emptyFilterState.hidden = true;
+  catalogGrid.hidden = false;
+
+  for (const label of visibleLabels) {
+    const qty = clampSheets(cart[label.id]);
+    const card = document.createElement('article');
+    card.className = `label-card${qty > 0 ? ' selected' : ''}`;
+    card.dataset.id = label.id;
+
+    const totalUnits = qty * LABELS_PER_SHEET;
+    const catName = getCategoryName(label.categoryId);
+
+    card.innerHTML = `
+      <button type="button" class="card-preview-btn" data-action="preview" data-id="${label.id}" aria-label="Visualizar ${escHtml(label.name)}">
+        <img src="${label.dataUrl}" alt="${escHtml(label.name)}" />
+      </button>
+      <div class="card-body">
+        <div class="card-meta-row">
+          <span class="card-meta-text">${escHtml(catName)} · 6×3 cm</span>
+          <div class="card-icon-actions">
+            <button type="button" class="icon-btn" data-action="edit" data-id="${label.id}" aria-label="Editar ${escHtml(label.name)}" title="Editar nome e categoria">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+            </button>
+            <button type="button" class="icon-btn danger" data-action="delete" data-id="${label.id}" aria-label="Excluir ${escHtml(label.name)}" title="Excluir etiqueta">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            </button>
+          </div>
+        </div>
+        <h3 class="card-title" title="${escHtml(label.name)}">${escHtml(label.name)}</h3>
+        <div class="card-purchase-row">
+          ${
+            qty === 0
+              ? `<button type="button" class="btn-add-label" data-action="add" data-id="${label.id}">Adicionar à folha</button>`
+              : `<div class="qty-stepper">
+                   <button type="button" class="qty-btn" data-action="dec" data-id="${label.id}" aria-label="Diminuir folhas de ${escHtml(label.name)}">−</button>
+                   <input type="number" class="qty-input tabular-nums" min="0" max="${MAX_SHEETS_PER_LABEL}" value="${qty}" data-action="qty-input" data-id="${label.id}" aria-label="Quantidade de folhas para ${escHtml(label.name)}" />
+                   <button type="button" class="qty-btn" data-action="inc" data-id="${label.id}" aria-label="Aumentar folhas de ${escHtml(label.name)}">+</button>
+                 </div>
+                 <span class="qty-summary tabular-nums">${qty} ${qty === 1 ? 'folha' : 'folhas'} · ${totalUnits} un.</span>`
+          }
+        </div>
+      </div>
+    `;
+
+    catalogGrid.appendChild(card);
+  }
+}
+
+function renderCheckoutSummary() {
+  const summary = calculateCheckoutSummary(labels, cart);
+  checkoutCountBadge.textContent = `${summary.totalSheets} ${summary.totalSheets === 1 ? 'folha' : 'folhas'}`;
+
+  if (summary.totalSheets === 0) {
+    selectionSummary.textContent = 'Nenhuma folha selecionada';
+    clearSelectionBtn.hidden = true;
+  } else {
+    selectionSummary.textContent = `${summary.totalModels} ${summary.totalModels === 1 ? 'modelo' : 'modelos'} · ${summary.totalSheets} ${summary.totalSheets === 1 ? 'folha' : 'folhas'} (${summary.totalStickers} etiquetas)`;
+    clearSelectionBtn.hidden = false;
+  }
+
+  summaryModels.textContent = String(summary.totalModels);
+  summarySheets.textContent = String(summary.totalSheets);
+  summaryStickers.textContent = String(summary.totalStickers);
+
+  generatePdfBtn.disabled = summary.totalSheets === 0;
+  drawerClearBtn.disabled = summary.totalSheets === 0;
+
+  if (!checkoutOverlay.hidden) {
+    renderCheckoutItems(summary);
+  }
+}
+
+function renderCheckoutItems(summary) {
+  checkoutItemsList.innerHTML = '';
+
+  if (summary.items.length === 0) {
+    checkoutItemsList.innerHTML = `
+      <div class="checkout-empty">
+        <p>Nenhuma etiqueta selecionada no momento.</p>
+        <p>Volte ao catálogo e escolha a quantidade de folhas desejada.</p>
+      </div>
+    `;
+    return;
+  }
+
+  for (const item of summary.items) {
+    const row = document.createElement('div');
+    row.className = 'checkout-item';
+    const catName = getCategoryName(item.label.categoryId);
+
+    row.innerHTML = `
+      <img class="checkout-thumb" src="${item.label.dataUrl}" alt="${escHtml(item.label.name)}" />
+      <div class="checkout-item-info">
+        <div class="checkout-item-name" title="${escHtml(item.label.name)}">${escHtml(item.label.name)}</div>
+        <div class="checkout-item-meta tabular-nums">${escHtml(catName)} · ${item.totalStickers} etiquetas</div>
+      </div>
+      <div class="checkout-item-controls">
+        <div class="qty-stepper">
+          <button type="button" class="qty-btn" data-checkout-action="dec" data-id="${item.label.id}" aria-label="Diminuir folhas de ${escHtml(item.label.name)}">−</button>
+          <input type="number" class="qty-input tabular-nums" min="0" max="${MAX_SHEETS_PER_LABEL}" value="${item.sheets}" data-checkout-action="qty" data-id="${item.label.id}" aria-label="Folhas de ${escHtml(item.label.name)}" />
+          <button type="button" class="qty-btn" data-checkout-action="inc" data-id="${item.label.id}" aria-label="Aumentar folhas de ${escHtml(item.label.name)}">+</button>
+        </div>
+        <button type="button" class="icon-btn danger" data-checkout-action="remove" data-id="${item.label.id}" aria-label="Remover ${escHtml(item.label.name)} do checkout" title="Remover">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+    `;
+    checkoutItemsList.appendChild(row);
+  }
+}
+
+// ─── Cart / Selection Actions ────────────────────────────────────────────────
+
+async function setLabelSheets(labelId, rawQty) {
+  const qty = clampSheets(rawQty);
+  if (qty <= 0) {
+    delete cart[labelId];
+  } else {
+    cart[labelId] = qty;
+  }
+  exportSuccessBox.hidden = true;
+  await saveCart(cart);
+  renderCatalogGrid();
+  renderCheckoutSummary();
+}
+
+async function clearCartSelection() {
+  cart = {};
+  exportSuccessBox.hidden = true;
+  await saveCart(cart);
+  renderCatalogGrid();
+  renderCheckoutSummary();
+}
+
+catalogGrid.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const { action, id } = btn.dataset;
+
+  if (action === 'preview') openPreviewModal(id);
+  if (action === 'edit') openEditModalForLabel(id);
+  if (action === 'delete') deleteLabel(id);
+  if (action === 'add') setLabelSheets(id, 1);
+  if (action === 'inc') setLabelSheets(id, (cart[id] || 0) + 1);
+  if (action === 'dec') setLabelSheets(id, (cart[id] || 0) - 1);
+});
+
+catalogGrid.addEventListener('change', (e) => {
+  const input = e.target.closest('[data-action="qty-input"]');
+  if (!input) return;
+  setLabelSheets(input.dataset.id, input.value);
+});
+
+clearSelectionBtn.addEventListener('click', clearCartSelection);
+drawerClearBtn.addEventListener('click', clearCartSelection);
+
+checkoutItemsList.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-checkout-action]');
+  if (!btn) return;
+  const { checkoutAction, id } = btn.dataset;
+
+  if (checkoutAction === 'inc') setLabelSheets(id, (cart[id] || 0) + 1);
+  if (checkoutAction === 'dec') setLabelSheets(id, (cart[id] || 0) - 1);
+  if (checkoutAction === 'remove') setLabelSheets(id, 0);
+});
+
+checkoutItemsList.addEventListener('change', (e) => {
+  const input = e.target.closest('[data-checkout-action="qty"]');
+  if (!input) return;
+  setLabelSheets(input.dataset.id, input.value);
+});
+
+// ─── Search & Sort ───────────────────────────────────────────────────────────
+
+searchInput.addEventListener('input', () => {
+  searchQuery = searchInput.value.trim();
+  clearSearchBtn.hidden = searchQuery.length === 0;
+  renderCatalogGrid();
+});
+
+clearSearchBtn.addEventListener('click', () => {
+  searchInput.value = '';
+  searchQuery = '';
+  clearSearchBtn.hidden = true;
+  renderCatalogGrid();
+  searchInput.focus();
+});
+
+sortSelect.addEventListener('change', () => {
+  sortBy = sortSelect.value;
+  renderCatalogGrid();
+});
+
+resetFiltersBtn.addEventListener('click', () => {
+  searchInput.value = '';
+  searchQuery = '';
+  clearSearchBtn.hidden = true;
+  activeCategoryId = 'all';
+  renderAll();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
+    e.preventDefault();
+    searchInput.focus();
+  }
+  if (e.key === 'Escape') {
+    if (!checkoutOverlay.hidden) closeCheckoutDrawer();
+    if (!editLabelModal.hidden) closeEditLabelModal();
+    if (!categoriesModal.hidden) categoriesModal.hidden = true;
+    if (!previewModal.hidden) previewModal.hidden = true;
+    if (!settingsModal.hidden) settingsModal.hidden = true;
+  }
+});
+
+// ─── Empty State Demo & Upload ───────────────────────────────────────────────
+
+emptyUploadBtn.addEventListener('click', () => fileInput.click());
+
+loadDemoBtn.addEventListener('click', async () => {
+  const samples = generateDemoLabels();
+  labels = [...labels, ...samples];
+  await saveLabels(labels);
+  renderAll();
+  showToast('6 etiquetas de exemplo carregadas no catálogo.');
+});
+
+// ─── File Upload (Images, PDF, ZIP) + OCR ────────────────────────────────────
 
 uploadArea.addEventListener('click', () => fileInput.click());
 
@@ -238,97 +601,64 @@ uploadArea.addEventListener('dragleave', () => {
 uploadArea.addEventListener('drop', (e) => {
   e.preventDefault();
   uploadArea.classList.remove('drag-over');
-  processFiles(Array.from(e.dataTransfer.files));
+  handleIncomingFiles(Array.from(e.dataTransfer.files));
 });
 
 fileInput.addEventListener('change', () => {
-  processFiles(Array.from(fileInput.files));
+  handleIncomingFiles(Array.from(fileInput.files));
   fileInput.value = '';
 });
 
-async function processFiles(files) {
-  const zipFiles = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.zip'));
-  const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+async function handleIncomingFiles(files) {
+  if (!files.length) return;
 
-  // Process zip files first
-  for (const zip of zipFiles) {
-    await processZip(zip);
-  }
-
-  // Process image files
-  if (imageFiles.length === 1) {
-    // Single file: show rename modal
-    await addLabelWithRename(imageFiles[0]);
-  } else if (imageFiles.length > 1) {
-    // Multiple files: auto-name from filename (batch mode)
-    await addLabelsBatch(imageFiles);
-  }
-
-  // Terminate worker if it was created
-  if (tesseractWorker) {
-    await tesseractWorker.terminate();
-    tesseractWorker = null;
-  }
-
-  if (!zipFiles.length && !imageFiles.length) {
-    appendAssistantMessage('<p>⚠️ Nenhum arquivo de imagem ou .zip encontrado. Envie arquivos PNG, JPG, WEBP ou um .zip contendo imagens.</p>', 'error-bubble');
-  }
-}
-
-async function processZip(zipFile) {
-  showProgress(`Extraindo ${zipFile.name}...`, 0);
+  const extractedItems = []; // Array<{ dataUrl, fallbackName }>
 
   try {
-    const zip = await JSZip.loadAsync(zipFile);
-    const imageEntries = [];
-
-    zip.forEach((path, entry) => {
-      if (entry.dir) return;
-      const lower = path.toLowerCase();
-      if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.webp')) {
-        imageEntries.push({ path, entry });
+    for (const file of files) {
+      const lower = file.name.toLowerCase();
+      if (lower.endsWith('.zip')) {
+        const fromZip = await extractItemsFromZip(file);
+        extractedItems.push(...fromZip);
+      } else if (lower.endsWith('.pdf') || file.type === 'application/pdf') {
+        const fromPdf = await extractItemsFromPdf(file);
+        extractedItems.push(...fromPdf);
+      } else if (file.type.startsWith('image/')) {
+        const dataUrl = await blobToDataUrl(file);
+        const fallbackName = cleanFilename(file.name);
+        extractedItems.push({ dataUrl, fallbackName });
       }
-    });
+    }
 
-    if (!imageEntries.length) {
-      hideProgress();
-      appendAssistantMessage('<p>⚠️ O arquivo .zip não contém imagens (PNG, JPG, WEBP).</p>', 'error-bubble');
+    if (extractedItems.length === 0) {
+      showToast('Nenhum arquivo PNG, JPG, WEBP, PDF ou ZIP válido encontrado.', true);
       return;
     }
 
-    let added = 0;
-    for (let i = 0; i < imageEntries.length; i++) {
-      const { path, entry } = imageEntries[i];
-      updateProgress(((i + 1) / imageEntries.length) * 100);
-
-      const blob = await entry.async('blob');
-      const dataUrl = await blobToDataUrl(blob);
-      const id = crypto.randomUUID();
-
-      // Extract name from file path inside zip
-      const fileName = path.split('/').pop();
-      const fallbackName = fileName.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
-
-      showProgress(`Lendo texto: ${fallbackName}...`, ((i) / imageEntries.length) * 100);
-      const name = await extractLabelName(dataUrl, fallbackName);
-
-      // Check for duplicates by name
-      if (!labels.some(l => l.name.toLowerCase() === name.toLowerCase())) {
-        labels.push({ id, name, dataUrl });
-        added++;
-      }
+    if (extractedItems.length === 1) {
+      await processSingleItemWithConfirm(extractedItems[0]);
+    } else {
+      await processBatchItems(extractedItems);
     }
-
-    saveLabelsToDB();
-    renderLabelsGrid();
-    hideProgress();
-
-    appendAssistantMessage(`<p>📦 Arquivo <strong>${escHtml(zipFile.name)}</strong> extraído com sucesso!</p><p>✅ <strong>${added}</strong> etiqueta${added !== 1 ? 's' : ''} adicionada${added !== 1 ? 's' : ''}.</p><p class="hint-text">💡 Renomeie qualquer etiqueta clicando no ✏️ na sidebar.</p>`);
   } catch (err) {
+    console.error('Erro no upload:', err);
+    showToast('Não foi possível processar um dos arquivos enviados.', true);
+  } finally {
     hideProgress();
-    console.error('Erro ao processar zip:', err);
-    appendAssistantMessage('<p>❌ Erro ao abrir o arquivo .zip. Verifique se o arquivo está válido.</p>', 'error-bubble');
+    if (tesseractWorker) {
+      await tesseractWorker.terminate().catch(() => {});
+      tesseractWorker = null;
+    }
   }
+}
+
+function cleanFilename(filename) {
+  return filename
+    .split('/')
+    .pop()
+    .replace(/\.[^.]+$/, '')
+    .replace(/[-_]+/g, ' ')
+    .trim() || 'Etiqueta';
 }
 
 function blobToDataUrl(blob) {
@@ -340,816 +670,517 @@ function blobToDataUrl(blob) {
   });
 }
 
-// Single file upload — shows rename modal
-async function addLabelWithRename(file) {
-  const dataUrl = await new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = (e) => resolve(e.target.result);
-    reader.readAsDataURL(file);
+async function extractItemsFromZip(zipFile) {
+  showProgress(`Extraindo ${zipFile.name}...`, 10);
+  const zip = await window.JSZip.loadAsync(zipFile);
+  const items = [];
+  const entries = [];
+
+  zip.forEach((path, entry) => {
+    if (entry.dir) return;
+    const lower = path.toLowerCase();
+    if (
+      lower.endsWith('.png') ||
+      lower.endsWith('.jpg') ||
+      lower.endsWith('.jpeg') ||
+      lower.endsWith('.webp') ||
+      lower.endsWith('.pdf')
+    ) {
+      entries.push({ path, entry });
+    }
   });
 
-  const id = crypto.randomUUID();
-  const fallbackName = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
+  for (let i = 0; i < entries.length; i++) {
+    const { path, entry } = entries[i];
+    updateProgress(10 + ((i + 1) / Math.max(1, entries.length)) * 30);
+    const blob = await entry.async('blob');
+    if (path.toLowerCase().endsWith('.pdf')) {
+      const pdfItems = await extractItemsFromPdf(blob, cleanFilename(path));
+      items.push(...pdfItems);
+    } else {
+      const dataUrl = await blobToDataUrl(blob);
+      items.push({ dataUrl, fallbackName: cleanFilename(path) });
+    }
+  }
 
-  showProgress("Lendo texto da etiqueta com IA...", 50);
-  const suggestedName = await extractLabelName(dataUrl, fallbackName);
+  return items;
+}
+
+async function extractItemsFromPdf(pdfBlobOrFile, baseNameOverride) {
+  if (!window.pdfjsLib) {
+    throw new Error('Leitor de PDF indisponível no momento.');
+  }
+
+  const baseName = baseNameOverride || cleanFilename(pdfBlobOrFile.name || 'etiqueta.pdf');
+  showProgress(`Convertendo PDF: ${baseName}...`, 15);
+
+  const buffer = await pdfBlobOrFile.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+  const items = [];
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 2.0 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    const dataUrl = canvas.toDataURL('image/png');
+    const fallbackName = pdf.numPages > 1 ? `${baseName} pág ${pageNum}` : baseName;
+    items.push({ dataUrl, fallbackName });
+    updateProgress(15 + (pageNum / pdf.numPages) * 25);
+  }
+
+  return items;
+}
+
+async function recognizeLabelMetadata(dataUrl, fallbackName) {
+  try {
+    if (!window.Tesseract) throw new Error('Tesseract não carregado');
+    if (!tesseractWorker) {
+      tesseractWorker = await window.Tesseract.createWorker('por');
+    }
+    const { data: { text } } = await tesseractWorker.recognize(dataUrl);
+    const name = cleanOcrLabelName(text, fallbackName);
+    const categoryId = inferCategoryFromText(`${name} ${text}`, categories);
+    return { name, categoryId };
+  } catch (err) {
+    console.warn('Fallback de OCR aplicado:', err);
+    const categoryId = inferCategoryFromText(fallbackName, categories);
+    return { name: fallbackName, categoryId };
+  }
+}
+
+async function processSingleItemWithConfirm(item) {
+  showProgress('Lendo conteúdo da etiqueta...', 50);
+  const { name, categoryId } = await recognizeLabelMetadata(item.dataUrl, item.fallbackName);
   hideProgress();
 
-  return new Promise((resolve) => {
-    openRenameModal(id, suggestedName, async () => {
-      const label = { id, name: renameInput.value.trim() || suggestedName, dataUrl };
-      labels.push(label);
-      await saveLabelsToDB();
-      renderLabelsGrid();
-      resolve();
+  await new Promise((resolve) => {
+    openCreateConfirmModal({
+      name,
+      categoryId,
+      dataUrl: item.dataUrl,
+      onDone: resolve
     });
   });
 }
 
-// Batch upload — auto-names from filenames, no modal
-async function addLabelsBatch(files) {
-  showProgress(`Importando ${files.length} etiquetas...`, 0);
+async function processBatchItems(items) {
   let added = 0;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    showProgress(
+      `Lendo etiqueta ${i + 1} de ${items.length}...`,
+      ((i + 1) / items.length) * 100
+    );
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    updateProgress(((i + 1) / files.length) * 100);
+    const { name, categoryId } = await recognizeLabelMetadata(item.dataUrl, item.fallbackName);
+    const duplicate = labels.some(l => l.name.toLowerCase() === name.toLowerCase());
 
-    const dataUrl = await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target.result);
-      reader.readAsDataURL(file);
-    });
-
-    const id = crypto.randomUUID();
-    const fallbackName = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
-
-    showProgress(`Lendo etiqueta ${i+1} de ${files.length}...`, ((i) / files.length) * 100);
-    const name = await extractLabelName(dataUrl, fallbackName);
-
-    // Skip duplicates
-    if (!labels.some(l => l.name.toLowerCase() === name.toLowerCase())) {
-      labels.push({ id, name, dataUrl });
+    if (!duplicate) {
+      labels.unshift({
+        id: crypto.randomUUID(),
+        name,
+        categoryId,
+        dataUrl: item.dataUrl,
+        createdAt: Date.now() - i
+      });
       added++;
     }
   }
 
-  saveLabelsToDB();
-  renderLabelsGrid();
-  hideProgress();
-
-  appendAssistantMessage(`<p>📤 Upload em lote concluído!</p><p>✅ <strong>${added}</strong> etiqueta${added !== 1 ? 's' : ''} adicionada${added !== 1 ? 's' : ''}.</p><p class="hint-text">💡 Renomeie qualquer etiqueta clicando no ✏️ na sidebar.</p>`);
+  await saveLabels(labels);
+  renderAll();
+  showToast(`${added} ${added === 1 ? 'etiqueta importada' : 'etiquetas importadas'} com sucesso.`);
 }
 
-// ─── OCR Helper ───────────────────────────────────────────────────────────────
+// ─── Edit / Create Confirm Label Modal ───────────────────────────────────────
 
-let tesseractWorker = null;
-
-async function getTesseractWorker() {
-  if (!tesseractWorker) {
-    tesseractWorker = await Tesseract.createWorker('por');
+function populateCategorySelect(selectedId) {
+  editCategorySelect.innerHTML = '';
+  for (const cat of categories) {
+    const opt = document.createElement('option');
+    opt.value = cat.id;
+    opt.textContent = cat.name;
+    if (cat.id === selectedId) opt.selected = true;
+    editCategorySelect.appendChild(opt);
   }
-  return tesseractWorker;
 }
 
-async function extractLabelName(dataUrl, fallbackName) {
-  try {
-    const worker = await getTesseractWorker();
-    const { data: { text } } = await worker.recognize(dataUrl);
-    
-    // Clean text: remove newlines, multiple spaces, keep only meaningful lines
-    const lines = text.split('\n')
-      .map(l => l.trim().replace(/\s+/g, ' '))
-      .filter(l => l.length > 2);
-      
-    if (lines.length > 0) {
-      // Use up to the first 2 lines (usually title and sub-title)
-      let name = lines.slice(0, 2).join(' - ');
-      // Title Case
-      name = name.toLowerCase().replace(/(^\w|\s\w|[-]\w)/g, m => m.toUpperCase());
-      return name;
-    }
-  } catch (e) {
-    console.warn("OCR Error:", e);
+function openCreateConfirmModal({ name, categoryId, dataUrl, onDone }) {
+  activeEditContext = { mode: 'create', dataUrl, onDone };
+  editModalTitle.textContent = 'Confirmar Nova Etiqueta';
+  editModalThumb.src = dataUrl;
+  editNameInput.value = name;
+  quickNewCatInput.value = '';
+  populateCategorySelect(categoryId);
+  editLabelModal.hidden = false;
+  setTimeout(() => {
+    editNameInput.focus();
+    editNameInput.select();
+  }, 40);
+}
+
+function openEditModalForLabel(id) {
+  const label = labels.find(l => l.id === id);
+  if (!label) return;
+  activeEditContext = { mode: 'edit', labelId: id };
+  editModalTitle.textContent = 'Editar Etiqueta';
+  editModalThumb.src = label.dataUrl;
+  editNameInput.value = label.name;
+  quickNewCatInput.value = '';
+  populateCategorySelect(label.categoryId || 'sem-categoria');
+  editLabelModal.hidden = false;
+  setTimeout(() => {
+    editNameInput.focus();
+    editNameInput.select();
+  }, 40);
+}
+
+function closeEditLabelModal() {
+  editLabelModal.hidden = true;
+  if (activeEditContext?.onDone) {
+    activeEditContext.onDone();
   }
-  return fallbackName;
+  activeEditContext = null;
 }
 
-// ─── Labels Grid ──────────────────────────────────────────────────────────────
+closeEditModal.addEventListener('click', closeEditLabelModal);
+cancelEditBtn.addEventListener('click', closeEditLabelModal);
+editLabelModal.addEventListener('click', (e) => {
+  if (e.target === editLabelModal) closeEditLabelModal();
+});
 
-function renderLabelsGrid() {
-  labelCount.textContent = labels.length;
+quickAddCatBtn.addEventListener('click', async () => {
+  const rawName = quickNewCatInput.value.trim();
+  if (!rawName) return;
 
-  if (!labels.length) {
-    labelsGrid.innerHTML = '<div class="empty-state"><span>Nenhuma etiqueta ainda</span></div>';
-    return;
+  const newCat = await addCategory(rawName);
+  if (newCat) {
+    populateCategorySelect(newCat.id);
+    quickNewCatInput.value = '';
+    showToast(`Categoria "${newCat.name}" criada.`);
   }
+});
 
-  labelsGrid.innerHTML = '';
-  labels.forEach(label => {
-    const card = document.createElement('div');
-    card.className = 'label-card';
-    card.dataset.id = label.id;
-    card.innerHTML = `
-      <img class="label-thumb" src="${label.dataUrl}" alt="${escHtml(label.name)}" />
-      <div class="label-info">
-        <div class="label-name" title="${escHtml(label.name)}">${escHtml(label.name)}</div>
-        <div class="label-meta">6×3 cm</div>
-      </div>
-      <div class="label-actions">
-        <button class="icon-btn" data-action="preview" data-id="${label.id}" title="Pré-visualizar">👁️</button>
-        <button class="icon-btn" data-action="rename" data-id="${label.id}" title="Renomear">✏️</button>
-        <button class="icon-btn danger" data-action="delete" data-id="${label.id}" title="Remover">🗑️</button>
-      </div>
-    `;
-    labelsGrid.appendChild(card);
-  });
-}
+editLabelForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const cleanName = editNameInput.value.trim();
+  if (!cleanName) return;
 
-labelsGrid.addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-action]');
-  if (!btn) return;
-  const { action, id } = btn.dataset;
+  const chosenCategoryId = editCategorySelect.value || 'sem-categoria';
 
-  if (action === 'preview') openPreview(id);
-  if (action === 'rename') {
-    const label = labels.find(l => l.id === id);
-    if (label) openRenameModal(id, label.name, async () => {
-      label.name = renameInput.value.trim() || label.name;
-      await saveLabelsToDB();
-      renderLabelsGrid();
+  if (activeEditContext?.mode === 'create') {
+    labels.unshift({
+      id: crypto.randomUUID(),
+      name: cleanName,
+      categoryId: chosenCategoryId,
+      dataUrl: activeEditContext.dataUrl,
+      createdAt: Date.now()
     });
+    await saveLabels(labels);
+    showToast(`Etiqueta "${cleanName}" adicionada ao catálogo.`);
+  } else if (activeEditContext?.mode === 'edit') {
+    const target = labels.find(l => l.id === activeEditContext.labelId);
+    if (target) {
+      target.name = cleanName;
+      target.categoryId = chosenCategoryId;
+      await saveLabels(labels);
+      showToast('Etiqueta atualizada.');
+    }
   }
-  if (action === 'delete') deleteLabel(id);
+
+  closeEditLabelModal();
+  renderAll();
 });
 
 async function deleteLabel(id) {
+  const target = labels.find(l => l.id === id);
   labels = labels.filter(l => l.id !== id);
-  await saveLabelsToDB();
-  clearCachedPDFsForLabel(id); // limpa PDFs em cache dessa etiqueta
-  renderLabelsGrid();
+  delete cart[id];
+  await Promise.all([saveLabels(labels), saveCart(cart)]);
+  renderAll();
+  if (target) {
+    showToast(`"${target.name}" removida do catálogo.`);
+  }
 }
 
-// ─── Settings modal & Clear All ───────────────────────────────────────────────
+// ─── Category Management ─────────────────────────────────────────────────────
 
-settingsBtn.addEventListener('click', () => {
-  settingsModal.hidden = false;
-  clearConfirmBox.hidden = true; // reset confirmation state
-  clearConfirmInput.value = ''; // clear input
-  confirmClearBtn.disabled = true;
-  confirmClearBtn.style.opacity = '0.5';
-  confirmClearBtn.style.cursor = 'not-allowed';
-});
+async function addCategory(rawName) {
+  const name = rawName.trim();
+  if (!name) return null;
 
-closeSettings.addEventListener('click', () => {
-  settingsModal.hidden = true;
-});
-
-settingsModal.addEventListener('click', (e) => {
-  if (e.target === settingsModal) settingsModal.hidden = true;
-});
-
-btnDangerClearAll.addEventListener('click', () => {
-  if (labels.length === 0) {
-    alert('Não há etiquetas para apagar.');
-    return;
+  const exists = categories.some(c => c.name.toLowerCase() === name.toLowerCase());
+  if (exists) {
+    showToast('Já existe uma categoria com esse nome.', true);
+    return null;
   }
-  clearConfirmBox.hidden = false;
-  setTimeout(() => clearConfirmInput.focus(), 100);
-});
 
-// Backup & Restore listeners
-btnExportBackup.addEventListener('click', () => {
-  if (labels.length === 0) {
-    alert('Não há etiquetas para exportar.');
-    return;
-  }
-  downloadBackup();
-});
-
-btnImportBackup.addEventListener('click', () => {
-  importInput.click();
-});
-
-importInput.addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = async (event) => {
-    try {
-      const importedData = JSON.parse(event.target.result);
-      
-      if (!Array.isArray(importedData)) {
-        throw new Error('Formato inválido: o arquivo deve ser uma lista de etiquetas.');
-      }
-
-      // Basic validation of content
-      const validLabels = importedData.filter(item => item.name && item.dataUrl);
-      
-      if (validLabels.length === 0) {
-        throw new Error('Nenhuma etiqueta válida encontrada no arquivo.');
-      }
-
-      // Merge avoiding exact duplicates (by name and content)
-      let addedCount = 0;
-      for (const newLabel of validLabels) {
-        const isDuplicate = labels.some(l => 
-          l.name.toLowerCase() === newLabel.name.toLowerCase() && 
-          l.dataUrl.length === newLabel.dataUrl.length
-        );
-
-        if (!isDuplicate) {
-          // Force a new ID to avoid collisions with existing ones
-          labels.push({
-            id: crypto.randomUUID(),
-            name: newLabel.name,
-            dataUrl: newLabel.dataUrl
-          });
-          addedCount++;
-        }
-      }
-
-      if (addedCount > 0) {
-        await saveLabelsToDB();
-        renderLabelsGrid();
-        settingsModal.hidden = true;
-        appendAssistantMessage(`<p>📥 Importação concluída!</p><p>✅ <strong>${addedCount}</strong> nova${addedCount !== 1 ? 's' : ''} etiqueta${addedCount !== 1 ? 's' : ''} adicionada${addedCount !== 1 ? 's' : ''} à sua biblioteca.</p>`);
-      } else {
-        alert('Todas as etiquetas do arquivo já existem na sua biblioteca.');
-      }
-
-    } catch (err) {
-      console.error('Erro na importação:', err);
-      alert('Erro ao importar arquivo: ' + err.message);
-    }
-    importInput.value = ''; // reset
+  const newCat = {
+    id: createCategorySlug(name, categories),
+    name
   };
-  reader.readAsText(file);
-});
 
-// Typing validation logic
-clearConfirmInput.addEventListener('input', () => {
-  const isMatch = clearConfirmInput.value.trim().toUpperCase() === 'APAGAR';
-  confirmClearBtn.disabled = !isMatch;
-  confirmClearBtn.style.opacity = isMatch ? '1' : '0.5';
-  confirmClearBtn.style.cursor = isMatch ? 'pointer' : 'not-allowed';
-});
+  // Keep "Sem Categoria" at the end
+  const semCatIdx = categories.findIndex(c => c.id === 'sem-categoria');
+  if (semCatIdx >= 0) {
+    categories.splice(semCatIdx, 0, newCat);
+  } else {
+    categories.push(newCat);
+  }
 
-cancelClearBtn.addEventListener('click', () => {
-  clearConfirmBox.hidden = true;
-  clearConfirmInput.value = '';
-});
-
-confirmClearBtn.addEventListener('click', async () => {
-  if (clearConfirmInput.value.trim().toUpperCase() !== 'APAGAR') return;
-
-  // 1. Create a safety backup before deleting
-  downloadBackup();
-  
-  // 2. Proceed with deletion
-  labels = [];
-  await saveLabelsToDB();
-  clearAllCachedPDFs();
-  renderLabelsGrid();
-  
-  clearConfirmBox.hidden = true;
-  settingsModal.hidden = true;
-  
-  appendAssistantMessage('<p>🗑️ Todas as etiquetas e caches foram apagados com sucesso.</p><p class="hint-text">💡 Um backup de segurança foi baixado automaticamente em sua pasta de Downloads.</p>');
-});
-
-/**
- * Downloads a safety JSON backup of all labels
- */
-function downloadBackup() {
-  if (labels.length === 0) return;
-  
-  const data = JSON.stringify(labels, null, 2);
-  const blob = new Blob([data], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const date = new Date().toISOString().split('T')[0];
-  
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `etiquetafit_backup_seguranca_${date}.json`;
-  a.click();
-  
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  await saveCategories(categories);
+  renderAll();
+  return newCat;
 }
 
-// ─── Preview modal ────────────────────────────────────────────────────────────
+function renderCategoriesManager() {
+  const counts = getCategoryCounts(labels, categories);
+  categoriesManagerList.innerHTML = '';
 
-function openPreview(id) {
+  for (const cat of categories) {
+    const isProtected = cat.id === 'sem-categoria';
+    const row = document.createElement('div');
+    row.className = 'cat-manager-row';
+
+    row.innerHTML = `
+      <input
+        type="text"
+        class="text-input flex-1"
+        value="${escHtml(cat.name)}"
+        data-cat-rename="${cat.id}"
+        aria-label="Nome da categoria ${escHtml(cat.name)}"
+        ${isProtected ? 'disabled' : ''}
+      />
+      <span class="cat-manager-count tabular-nums">${counts[cat.id] || 0} itens</span>
+      ${
+        isProtected
+          ? ''
+          : `<button type="button" class="icon-btn danger" data-cat-delete="${cat.id}" aria-label="Excluir categoria ${escHtml(cat.name)}" title="Excluir categoria">
+               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+             </button>`
+      }
+    `;
+    categoriesManagerList.appendChild(row);
+  }
+}
+
+manageCategoriesBtn.addEventListener('click', () => {
+  renderCategoriesManager();
+  categoriesModal.hidden = false;
+  setTimeout(() => newCategoryInput.focus(), 40);
+});
+
+closeCategoriesModal.addEventListener('click', () => {
+  categoriesModal.hidden = true;
+});
+
+categoriesModal.addEventListener('click', (e) => {
+  if (e.target === categoriesModal) categoriesModal.hidden = true;
+});
+
+addCategoryForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = newCategoryInput.value.trim();
+  if (!name) return;
+  const created = await addCategory(name);
+  if (created) {
+    newCategoryInput.value = '';
+    renderCategoriesManager();
+    showToast(`Categoria "${created.name}" adicionada.`);
+  }
+});
+
+categoriesManagerList.addEventListener('change', async (e) => {
+  const input = e.target.closest('[data-cat-rename]');
+  if (!input) return;
+  const id = input.dataset.catRename;
+  const newName = input.value.trim();
+  const cat = categories.find(c => c.id === id);
+  if (!cat) return;
+
+  if (!newName) {
+    input.value = cat.name;
+    return;
+  }
+
+  cat.name = newName;
+  await saveCategories(categories);
+  renderAll();
+  showToast('Categoria renomeada.');
+});
+
+categoriesManagerList.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-cat-delete]');
+  if (!btn) return;
+  const id = btn.dataset.catDelete;
+  const removed = categories.find(c => c.id === id);
+
+  categories = categories.filter(c => c.id !== id);
+  labels = labels.map(l => (l.categoryId === id ? { ...l, categoryId: 'sem-categoria' } : l));
+  if (activeCategoryId === id) activeCategoryId = 'all';
+
+  await Promise.all([saveCategories(categories), saveLabels(labels)]);
+  renderCategoriesManager();
+  renderAll();
+
+  if (removed) {
+    showToast(`Categoria "${removed.name}" removida. Etiquetas movidas para Sem Categoria.`);
+  }
+});
+
+// ─── Preview Modal ───────────────────────────────────────────────────────────
+
+function openPreviewModal(id) {
   const label = labels.find(l => l.id === id);
   if (!label) return;
+  activePreviewId = id;
   previewImg.src = label.dataUrl;
   previewName.textContent = label.name;
+  previewMeta.textContent = `${getCategoryName(label.categoryId)} · 6×3 cm (24/folha)`;
   previewModal.hidden = false;
 }
 
-closePreview.addEventListener('click', () => { previewModal.hidden = true; });
-previewModal.addEventListener('click', (e) => { if (e.target === previewModal) previewModal.hidden = true; });
-
-// ─── Rename modal ─────────────────────────────────────────────────────────────
-
-let onRenameConfirm = null;
-
-function openRenameModal(id, currentName, onConfirm) {
-  pendingRenameId = id;
-  renameInput.value = currentName;
-  onRenameConfirm = onConfirm;
-  renameModal.hidden = false;
-  setTimeout(() => {
-    renameInput.focus();
-    renameInput.select();
-  }, 50);
-}
-
-confirmRename.addEventListener('click', () => {
-  renameModal.hidden = true;
-  if (onRenameConfirm) { onRenameConfirm(); onRenameConfirm = null; }
+closePreview.addEventListener('click', () => {
+  previewModal.hidden = true;
 });
 
-cancelRename.addEventListener('click', () => {
-  renameModal.hidden = true;
-  onRenameConfirm = null;
+previewModal.addEventListener('click', (e) => {
+  if (e.target === previewModal) previewModal.hidden = true;
 });
 
-renameInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') confirmRename.click();
-  if (e.key === 'Escape') cancelRename.click();
+previewEditBtn.addEventListener('click', () => {
+  if (!activePreviewId) return;
+  const id = activePreviewId;
+  previewModal.hidden = true;
+  openEditModalForLabel(id);
 });
 
-// ─── Chat ─────────────────────────────────────────────────────────────────────
-
-// Auto-resize textarea
-chatInput.addEventListener('input', () => {
-  chatInput.style.height = 'auto';
-  chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+previewAddSheetBtn.addEventListener('click', async () => {
+  if (!activePreviewId) return;
+  await setLabelSheets(activePreviewId, (cart[activePreviewId] || 0) + 1);
+  showToast('+1 folha adicionada ao checkout.');
 });
 
-chatInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    handleSend();
+// ─── Checkout Drawer & Combined PDF Generation ───────────────────────────────
+
+function openCheckoutDrawer() {
+  const today = new Date().toISOString().split('T')[0];
+  if (!exportFilenameInput.value) {
+    exportFilenameInput.value = `etiquetas_lote_${today}`;
   }
+  const summary = calculateCheckoutSummary(labels, cart);
+  renderCheckoutItems(summary);
+  checkoutOverlay.hidden = false;
+}
+
+function closeCheckoutDrawer() {
+  checkoutOverlay.hidden = true;
+}
+
+openCheckoutBtn.addEventListener('click', openCheckoutDrawer);
+closeCheckoutBtn.addEventListener('click', closeCheckoutDrawer);
+checkoutOverlay.addEventListener('click', (e) => {
+  if (e.target === checkoutOverlay) closeCheckoutDrawer();
 });
 
-sendBtn.addEventListener('click', handleSend);
+generatePdfBtn.addEventListener('click', generateCombinedPdf);
 
-// Example chips
-document.addEventListener('click', (e) => {
-  if (e.target.matches('.example-chip')) {
-    chatInput.value = e.target.dataset.example;
-    chatInput.dispatchEvent(new Event('input'));
-    chatInput.focus();
-  }
-});
+async function generateCombinedPdf() {
+  const summary = calculateCheckoutSummary(labels, cart);
+  if (summary.totalSheets === 0) return;
 
-async function handleSend() {
-  const text = chatInput.value.trim();
-  if (!text) return;
-
-  chatInput.value = '';
-  chatInput.style.height = 'auto';
-
-  appendUserMessage(text);
-  await processRequest(text);
-}
-
-function appendUserMessage(text) {
-  const div = document.createElement('div');
-  div.className = 'chat-message user';
-  div.innerHTML = `
-    <div class="avatar">🧑</div>
-    <div class="bubble"><p>${escHtml(text)}</p></div>
-  `;
-  chatArea.appendChild(div);
-  scrollChat();
-}
-
-function appendAssistantMessage(html, extraClass = '') {
-  const div = document.createElement('div');
-  div.className = `chat-message assistant${extraClass ? ' ' + extraClass : ''}`;
-  div.innerHTML = `
-    <div class="avatar">🤖</div>
-    <div class="bubble">${html}</div>
-  `;
-  chatArea.appendChild(div);
-  scrollChat();
-  return div;
-}
-
-function scrollChat() {
-  chatArea.scrollTo({ top: chatArea.scrollHeight, behavior: 'smooth' });
-}
-
-// ─── Natural language parsing ─────────────────────────────────────────────────
-
-/**
- * Parse a request string to extract one or multiple label + quantity pairs.
- * Supports patterns like:
- *   "2 folhas de X"
- *   "quero 3 folhas do X"
- *   "preciso de 2 folhas da X e 1 folha do Y"
- *   "X - 3 folhas"
- * Returns Array<{labelName: string, sheets: number}>
- */
-function parseRequest(text) {
-  const lower = text.toLowerCase();
-  const results = [];
-
-  const qtyRegexStr = '\\d+|uma?|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez';
-
-  // Normalise separators to &&
-  let normalised = lower
-    .replace(new RegExp(`\\be\\s+(${qtyRegexStr})\\s+folhas?\\b`, 'gi'), '&&$1 folhas')
-    .replace(new RegExp(`,\\s*(${qtyRegexStr})\\s+folhas?\\b`, 'gi'), '&&$1 folhas')
-    .replace(/\s+mais\s+/gi, '&&');
-
-  // Catch missing commas (e.g., "carne duas folhas" -> "carne &&duas folhas")
-  // We ignore it if preceded by a dash or colon to preserve "Label - 2 folhas" format
-  normalised = normalised.replace(new RegExp(`([^\\-–—:])\\s+(${qtyRegexStr})\\s+folhas?\\b`, 'gi'), '$1&&$2 folhas');
-
-  // Clean up any double &&
-  normalised = normalised.replace(/&&+/g, '&&');
-
-  const parts = normalised.split('&&');
-
-  for (const part of parts) {
-    const match = extractLabelRequest(part.trim());
-    if (match) results.push(match);
-  }
-
-  // Deduplicate by label
-  const seen = new Set();
-  return results.filter(r => {
-    const key = r.labelName.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function extractLabelRequest(part) {
-  // Patterns for quantity
-  const qtyWords = { 'uma': 1, 'um': 1, 'dois': 2, 'duas': 2, 'tres': 3, 'três': 3,
-    'quatro': 4, 'cinco': 5, 'seis': 6, 'sete': 7, 'oito': 8, 'nove': 9, 'dez': 10 };
-
-  let sheets = null;
-  let labelPart = part;
-
-  // Try "N folha(s) ..." — number at start
-  let m = part.match(/^(?:quer|quero|gostaria|preciso\s+de|me\s+d[eêá]|gera|gerar|fazer|fa[cç]a|imprimir)?\s*(\d+|[a-zêáãçé]+)\s+folha[s]?\s+(?:de|do|da|das|dos)?\s*(.*)/i);
-  if (m) {
-    const rawQty = m[1].toLowerCase();
-    sheets = parseInt(rawQty) || qtyWords[rawQty] || 1;
-    labelPart = m[2].trim();
-  }
-
-  // Try "... — N folha(s)" — number at end
-  if (!sheets) {
-    m = part.match(/(.+?)\s+[-–—]\s*(\d+|[a-zêáãçé]+)\s+folha[s]?/i);
-    if (m) {
-      labelPart = m[1].trim();
-      const rawQty = m[2].toLowerCase();
-      sheets = parseInt(rawQty) || qtyWords[rawQty];
-    }
-  }
-
-  // Fallback: just a number somewhere
-  if (!sheets) {
-    m = part.match(/(\d+|[a-zêáãçé]+)\s+folha[s]?/i);
-    if (m) {
-      const rawQty = m[1].toLowerCase();
-      sheets = parseInt(rawQty) || qtyWords[rawQty];
-      if (sheets) {
-        labelPart = part.replace(m[0], '').trim();
-      }
-    }
-  }
-
-  if (!sheets) return null;
-
-  // Clean label name
-  const cleaned = labelPart
-    .replace(/^(de|do|da|das|dos|etiqueta|etiquetas|marmita|do\s+|da\s+|e\s+)\s*/gi, '')
-    .replace(/(?:\s+e|\s+mais|\s+ou|[.,;!?]+)$/gi, '')
-    .trim();
-
-  if (!cleaned) return null;
-
-  return { labelName: cleaned, sheets: Math.max(1, Math.min(sheets, 50)) };
-}
-
-/**
- * Find best matching label from library using fuzzy / keyword matching.
- * Returns the label object or null.
- */
-function findLabel(queryName) {
-  if (!labels.length) return null;
-
-  const queryWords = normalise(queryName).split(/\s+/).filter(w => w.length > 2);
-
-  let bestScore = 0;
-  let bestLabel = null;
-
-  for (const label of labels) {
-    const labelNorm = normalise(label.name);
-    const labelWords = labelNorm.split(/\s+/).filter(w => w.length > 2);
-
-    // Exact substring match — highest priority
-    if (labelNorm.includes(normalise(queryName))) {
-      return label;
-    }
-
-    // Score based on common meaningful words
-    let score = 0;
-    for (const qw of queryWords) {
-      if (labelNorm.includes(qw)) score += qw.length; // weight longer words more
-    }
-    // Bonus for reverse (label words in query)
-    for (const lw of labelWords) {
-      if (normalise(queryName).includes(lw)) score += lw.length * 0.5;
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestLabel = label;
-    }
-  }
-
-  // Require at least one meaningful word matched
-  return bestScore >= 3 ? bestLabel : null;
-}
-
-function normalise(str) {
-  return str
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove accents
-    .replace(/[^a-z0-9\s]/g, '')
-    .trim();
-}
-
-// ─── Request processing ───────────────────────────────────────────────────────
-
-async function processRequest(text) {
-  setBusy(true);
-
-  // Show typing indicator
-  const typingDiv = appendAssistantMessage(`
-    <div class="typing-indicator">
-      <div class="typing-dot"></div>
-      <div class="typing-dot"></div>
-      <div class="typing-dot"></div>
-    </div>
-  `);
-
-  await sleep(700); // realistic delay
-
-  typingDiv.remove();
-
-  if (!labels.length) {
-    appendAssistantMessage('<p>⚠️ Você ainda não fez upload de nenhuma etiqueta. Adicione suas etiquetas no painel à esquerda e depois me diga o que precisa.</p>', 'error-bubble');
-    setBusy(false);
+  if (!window.jspdf?.jsPDF) {
+    showToast('Biblioteca jsPDF ainda não carregada.', true);
     return;
   }
 
-  const requests = parseRequest(text);
+  showProgress(`Gerando PDF com ${summary.totalSheets} folha(s)...`, 0);
 
-  if (!requests.length) {
-    appendAssistantMessage(`
-      <p>🤔 Não consegui entender o pedido. Tente algo como:</p>
-      <div class="examples">
-        <button class="example-chip" data-example="Quero 2 folhas do escondidinho de mandioquinha">💬 "Quero 2 folhas do escondidinho de mandioquinha"</button>
-        <button class="example-chip" data-example="3 folhas do filé de frango">💬 "3 folhas do filé de frango"</button>
-      </div>
-    `);
-    setBusy(false);
-    return;
-  }
-
-  // Resolve labels
-  const resolved = [];
-  const notFound = [];
-
-  for (const req of requests) {
-    const label = findLabel(req.labelName);
-    if (label) {
-      resolved.push({ label, sheets: req.sheets, queryName: req.labelName });
-    } else {
-      notFound.push(req.labelName);
-    }
-  }
-
-  if (!resolved.length) {
-    const names = notFound.map(n => `"${n}"`).join(', ');
-    appendAssistantMessage(`<p>❌ Não encontrei nenhuma etiqueta correspondente a: ${escHtml(names)}.</p><p>Verifique os nomes das etiquetas salvas no painel ou tente usar palavras-chave do nome da etiqueta.</p>`, 'error-bubble');
-    setBusy(false);
-    return;
-  }
-
-  // Build confirmation message
-  let confirmHtml = `<p>✅ Encontrei ${resolved.length === 1 ? 'a etiqueta' : 'as etiquetas'}! Gerando ${resolved.reduce((a, r) => a + r.sheets, 0)} folha(s) de PDF...</p>`;
-
-  for (const r of resolved) {
-    const total = r.sheets * LABELS_PER_SHEET;
-    confirmHtml += `
-      <div class="result-card">
-        <img class="result-thumb" src="${r.label.dataUrl}" alt="${escHtml(r.label.name)}" />
-        <div class="result-info">
-          <div class="result-name">${escHtml(r.label.name)}</div>
-          <div class="result-meta">${r.sheets} folha${r.sheets > 1 ? 's' : ''} · ${total} etiqueta${total > 1 ? 's' : ''} · A4 landscape</div>
-        </div>
-      </div>
-    `;
-  }
-
-  if (notFound.length) {
-    confirmHtml += `<p style="margin-top:12px; font-size:12px; color:var(--yellow)">⚠️ Não encontrei: ${notFound.map(n => `"${escHtml(n)}"`).join(', ')}</p>`;
-  }
-
-  const confirmDiv = appendAssistantMessage(confirmHtml);
-  scrollChat();
-
-  await sleep(400);
-
-  // Generate PDFs
   try {
-    if (resolved.length === 1) {
-      await generateAndAttachPDF(resolved[0], confirmDiv);
-    } else {
-      await generateAndAttachBatchPDF(resolved, confirmDiv);
-    }
-  } catch (err) {
-    console.error('PDF generation error:', err);
-    appendAssistantMessage('<p>❌ Ocorreu um erro ao gerar o PDF. Tente novamente.</p>', 'error-bubble');
-  }
-
-  setBusy(false);
-}
-
-// ─── PDF Generation ───────────────────────────────────────────────────────────
-
-async function generateAndAttachPDF({ label, sheets }, parentDiv) {
-  let pdfBlob, filename, fromCache = false;
-
-  // 1. Check cache first
-  const cached = await getCachedPDF(label.id, sheets);
-  if (cached) {
-    pdfBlob = cached.blob;
-    filename = cached.filename;
-    fromCache = true;
-  }
-
-  // 2. Generate new PDF if not cached
-  if (!fromCache) {
-    showProgress(`Gerando PDF: ${label.name}...`, 0);
-
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const img = await loadImage(label.dataUrl);
 
-    for (let s = 0; s < sheets; s++) {
-      if (s > 0) doc.addPage('a4', 'landscape');
+    let currentSheet = 0;
+    let isFirstPage = true;
 
-      for (let row = 0; row < ROWS; row++) {
-        for (let col = 0; col < COLS; col++) {
-          const x = MARGIN_X_MM + col * LABEL_W_MM;
-          const y = MARGIN_Y_MM + row * LABEL_H_MM;
-          doc.addImage(img, 'PNG', x, y, LABEL_W_MM, LABEL_H_MM, undefined, 'FAST');
+    for (const item of summary.items) {
+      const img = await loadImage(item.label.dataUrl);
+
+      for (let s = 0; s < item.sheets; s++) {
+        if (!isFirstPage) {
+          doc.addPage('a4', 'landscape');
         }
-      }
+        isFirstPage = false;
 
-      // Draw faint grid lines to aid cutting
-      doc.setDrawColor(200, 200, 200);
-      doc.setLineWidth(0.1);
+        for (let row = 0; row < ROWS; row++) {
+          for (let col = 0; col < COLS; col++) {
+            const x = MARGIN_MM + col * LABEL_W_MM;
+            const y = MARGIN_MM + row * LABEL_H_MM;
+            doc.addImage(img, 'PNG', x, y, LABEL_W_MM, LABEL_H_MM, undefined, 'FAST');
+          }
+        }
 
-      for (let col = 0; col <= COLS; col++) {
-        const x = MARGIN_X_MM + col * LABEL_W_MM;
-        doc.line(x, MARGIN_Y_MM, x, MARGIN_Y_MM + ROWS * LABEL_H_MM);
-      }
-      for (let row = 0; row <= ROWS; row++) {
-        const y = MARGIN_Y_MM + row * LABEL_H_MM;
-        doc.line(MARGIN_X_MM, y, MARGIN_X_MM + COLS * LABEL_W_MM, y);
-      }
+        // Light cutting guide grid
+        doc.setDrawColor(200, 200, 200);
+        doc.setLineWidth(0.1);
+        for (let col = 0; col <= COLS; col++) {
+          const x = MARGIN_X_MM_VAL(col);
+          doc.line(x, MARGIN_MM, x, MARGIN_MM + ROWS * LABEL_H_MM);
+        }
+        for (let row = 0; row <= ROWS; row++) {
+          const y = MARGIN_Y_MM_VAL(row);
+          doc.line(MARGIN_MM, y, MARGIN_MM + COLS * LABEL_W_MM, y);
+        }
 
-      updateProgress(((s + 1) / sheets) * 100);
-      await sleep(20);
+        currentSheet++;
+        updateProgress((currentSheet / summary.totalSheets) * 100);
+        await sleep(10);
+      }
     }
 
+    const rawName = (exportFilenameInput.value || 'etiquetas_impressao')
+      .trim()
+      .replace(/\.pdf$/i, '')
+      .replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `${rawName || 'etiquetas_impressao'}.pdf`;
+
+    const pdfBlob = doc.output('blob');
+    if (lastGeneratedPdfUrl) {
+      URL.revokeObjectURL(lastGeneratedPdfUrl);
+    }
+    lastGeneratedPdfUrl = URL.createObjectURL(pdfBlob);
+
+    // Trigger download
+    const link = document.createElement('a');
+    link.href = lastGeneratedPdfUrl;
+    link.download = filename;
+    link.click();
+
+    exportDownloadAgainLink.href = lastGeneratedPdfUrl;
+    exportDownloadAgainLink.download = filename;
+    exportSuccessMeta.textContent = `${filename} · ${summary.totalSheets} folhas · ${summary.totalStickers} etiquetas`;
+    exportSuccessBox.hidden = false;
+
+    showToast(`PDF "${filename}" gerado com ${summary.totalSheets} folhas.`);
+  } catch (err) {
+    console.error('Erro ao gerar PDF:', err);
+    showToast('Erro ao gerar o PDF completo. Tente novamente.', true);
+  } finally {
     hideProgress();
-
-    const safeName = label.name.replace(/[^a-z0-9\s]/gi, '').replace(/\s+/g, '_').toLowerCase();
-    filename = `etiqueta_${safeName}_${sheets}folha${sheets > 1 ? 's' : ''}.pdf`;
-    pdfBlob = doc.output('blob');
-
-    // 3. Save to cache for future use
-    await cachePDF(label.id, sheets, pdfBlob, filename);
   }
-
-  // 4. Attach download to chat UI
-  const pdfUrl = URL.createObjectURL(pdfBlob);
-  const bubble = parentDiv.querySelector('.bubble');
-  const resultCard = bubble.querySelector(`.result-card img[src="${label.dataUrl}"]`)?.closest('.result-card');
-
-  const btn = document.createElement('button');
-  btn.className = 'download-btn';
-  btn.innerHTML = fromCache ? `⚡ Baixar PDF (instantâneo)` : `⬇️ Baixar PDF`;
-  btn.onclick = () => {
-    const a = document.createElement('a');
-    a.href = pdfUrl;
-    a.download = filename;
-    a.click();
-  };
-
-  if (resultCard) {
-    resultCard.appendChild(btn);
-  }
-
-  // Success tag with cache indicator
-  const successTag = document.createElement('div');
-  successTag.className = 'success-tag';
-  successTag.innerHTML = fromCache
-    ? `⚡ ${filename} <span style="opacity:0.6; font-weight:400">(do cache — entrega instantânea)</span>`
-    : `✅ ${filename}`;
-  if (resultCard) resultCard.after(successTag);
-
-  scrollChat();
 }
 
-async function generateAndAttachBatchPDF(resolved, parentDiv) {
-  let totalSheets = resolved.reduce((a, r) => a + r.sheets, 0);
-  showProgress(`Gerando arquivo único com ${totalSheets} folhas...`, 0);
+function MARGIN_X_MM_VAL(col) {
+  return MARGIN_MM + col * LABEL_W_MM;
+}
 
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-  
-  let currentSheet = 0;
-  let isFirstPage = true;
-
-  for (const r of resolved) {
-    const { label, sheets } = r;
-    const img = await loadImage(label.dataUrl);
-
-    for (let s = 0; s < sheets; s++) {
-      if (!isFirstPage) {
-        doc.addPage('a4', 'landscape');
-      }
-      isFirstPage = false;
-
-      for (let row = 0; row < ROWS; row++) {
-        for (let col = 0; col < COLS; col++) {
-          const x = MARGIN_X_MM + col * LABEL_W_MM;
-          const y = MARGIN_Y_MM + row * LABEL_H_MM;
-          doc.addImage(img, 'PNG', x, y, LABEL_W_MM, LABEL_H_MM, undefined, 'FAST');
-        }
-      }
-
-      // Draw faint grid lines to aid cutting
-      doc.setDrawColor(200, 200, 200);
-      doc.setLineWidth(0.1);
-
-      for (let col = 0; col <= COLS; col++) {
-        const x = MARGIN_X_MM + col * LABEL_W_MM;
-        doc.line(x, MARGIN_Y_MM, x, MARGIN_Y_MM + ROWS * LABEL_H_MM);
-      }
-      for (let row = 0; row <= ROWS; row++) {
-        const y = MARGIN_Y_MM + row * LABEL_H_MM;
-        doc.line(MARGIN_X_MM, y, MARGIN_X_MM + COLS * LABEL_W_MM, y);
-      }
-
-      currentSheet++;
-      updateProgress((currentSheet / totalSheets) * 100);
-      await sleep(10); // allow UI to update
-    }
-  }
-
-  hideProgress();
-
-  const filename = `etiquetas_lote_${totalSheets}folhas.pdf`;
-  const pdfBlob = doc.output('blob');
-  const pdfUrl = URL.createObjectURL(pdfBlob);
-
-  const bubble = parentDiv.querySelector('.bubble');
-  
-  const btn = document.createElement('button');
-  btn.className = 'download-btn';
-  btn.style.marginTop = '12px';
-  btn.style.width = '100%';
-  btn.style.padding = '12px';
-  btn.style.fontSize = '14px';
-  btn.innerHTML = `⬇️ Baixar PDF Único (${totalSheets} folhas)`;
-  btn.onclick = () => {
-    const a = document.createElement('a');
-    a.href = pdfUrl;
-    a.download = filename;
-    a.click();
-  };
-
-  bubble.appendChild(btn);
-  scrollChat();
+function MARGIN_Y_MM_VAL(row) {
+  return MARGIN_MM + row * LABEL_H_MM;
 }
 
 function loadImage(src) {
@@ -1161,63 +1192,142 @@ function loadImage(src) {
   });
 }
 
-// ─── Progress ─────────────────────────────────────────────────────────────────
+// ─── Backup & Settings Modal ─────────────────────────────────────────────────
 
-function showProgress(text, pct) {
-  progressText.textContent = text;
-  progressBar.style.width = pct + '%';
-  progressOverlay.hidden = false;
-}
-
-function updateProgress(pct) {
-  progressBar.style.width = pct + '%';
-}
-
-function hideProgress() {
-  progressOverlay.hidden = true;
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function setBusy(busy) {
-  sendBtn.disabled = busy;
-  chatInput.disabled = busy;
-  statusDot.classList.toggle('busy', busy);
-}
-
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
-
-function escHtml(str) {
-  if (!str) return '';
-  return str.toString()
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-function appendAssistantMessage(html, className = 'assistant') {
-  const div = document.createElement('div');
-  div.className = `chat-message ${className}`;
-  div.innerHTML = `
-    <div class="avatar">${className === 'error-bubble' ? '⚠️' : '🤖'}</div>
-    <div class="bubble">${html}</div>
-  `;
-  chatArea.appendChild(div);
-  scrollChat();
-  return div;
-}
-
-function scrollChat() {
-  chatArea.scrollTop = chatArea.scrollHeight;
-}
-
-// ─── Init ─────────────────────────────────────────────────────────────────────
-
-loadLabelsFromDB().then(() => {
-  renderLabelsGrid();
+settingsBtn.addEventListener('click', () => {
+  clearConfirmBox.hidden = true;
+  clearConfirmInput.value = '';
+  confirmClearBtn.disabled = true;
+  settingsModal.hidden = false;
 });
-chatInput.focus();
+
+closeSettings.addEventListener('click', () => {
+  settingsModal.hidden = true;
+});
+
+settingsModal.addEventListener('click', (e) => {
+  if (e.target === settingsModal) settingsModal.hidden = true;
+});
+
+function downloadBackupFile() {
+  const payload = {
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    categories,
+    labels
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const date = new Date().toISOString().split('T')[0];
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `etiquetafit_backup_${date}.json`;
+  a.click();
+
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+btnExportBackup.addEventListener('click', () => {
+  if (labels.length === 0) {
+    showToast('Não há etiquetas para exportar.', true);
+    return;
+  }
+  downloadBackupFile();
+  showToast('Backup JSON exportado.');
+});
+
+btnImportBackup.addEventListener('click', () => {
+  importInput.click();
+});
+
+importInput.addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    try {
+      const parsed = JSON.parse(ev.target.result);
+      const { labels: importedLabels, categories: importedCategories } = validateBackupPayload(parsed);
+
+      if (importedLabels.length === 0) {
+        showToast('Nenhuma etiqueta válida encontrada no arquivo.', true);
+        return;
+      }
+
+      for (const cat of importedCategories) {
+        if (!categories.some(c => c.id === cat.id)) {
+          categories.push(cat);
+        }
+      }
+
+      let added = 0;
+      for (const item of importedLabels) {
+        const duplicate = labels.some(
+          l => l.name.toLowerCase() === item.name.toLowerCase() && l.dataUrl.length === item.dataUrl.length
+        );
+        if (!duplicate) {
+          labels.unshift({
+            id: crypto.randomUUID(),
+            name: item.name,
+            categoryId: categories.some(c => c.id === item.categoryId) ? item.categoryId : 'sem-categoria',
+            dataUrl: item.dataUrl,
+            createdAt: item.createdAt || Date.now()
+          });
+          added++;
+        }
+      }
+
+      await Promise.all([saveCategories(categories), saveLabels(labels)]);
+      renderAll();
+      settingsModal.hidden = true;
+      showToast(
+        added > 0
+          ? `${added} ${added === 1 ? 'etiqueta importada' : 'etiquetas importadas'}.`
+          : 'Todas as etiquetas do arquivo já estavam cadastradas.'
+      );
+    } catch (err) {
+      showToast(err.message || 'Erro ao importar arquivo JSON.', true);
+    } finally {
+      importInput.value = '';
+    }
+  };
+  reader.readAsText(file);
+});
+
+btnDangerClearAll.addEventListener('click', () => {
+  if (labels.length === 0) {
+    showToast('A biblioteca já está vazia.', true);
+    return;
+  }
+  clearConfirmBox.hidden = false;
+  setTimeout(() => clearConfirmInput.focus(), 50);
+});
+
+clearConfirmInput.addEventListener('input', () => {
+  confirmClearBtn.disabled = clearConfirmInput.value.trim().toUpperCase() !== 'APAGAR';
+});
+
+cancelClearBtn.addEventListener('click', () => {
+  clearConfirmBox.hidden = true;
+  clearConfirmInput.value = '';
+});
+
+confirmClearBtn.addEventListener('click', async () => {
+  if (clearConfirmInput.value.trim().toUpperCase() !== 'APAGAR') return;
+
+  downloadBackupFile();
+  labels = [];
+  cart = {};
+  activeCategoryId = 'all';
+  await clearAllStorage();
+  renderAll();
+  clearConfirmBox.hidden = true;
+  settingsModal.hidden = true;
+  showToast('Biblioteca limpa. Um backup de segurança foi baixado.');
+});
+
+// ─── Start ───────────────────────────────────────────────────────────────────
+
+init();
