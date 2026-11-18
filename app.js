@@ -23,7 +23,7 @@ import {
   calculateCheckoutSummary,
   createCategorySlug,
   validateBackupPayload
-} from './lib/catalog.js';
+} from './lib/catalog.js?v=3';
 
 import {
   loadLabels,
@@ -33,9 +33,9 @@ import {
   loadCart,
   saveCart,
   clearAllStorage
-} from './lib/storage.js';
+} from './lib/storage.js?v=3';
 
-import { generateDemoLabels } from './lib/demoLabels.js';
+import { generateDemoLabels } from './lib/demoLabels.js?v=3';
 
 // Configure PDF.js worker if loaded
 if (window.pdfjsLib) {
@@ -1427,9 +1427,9 @@ function rotateImage90(img) {
   canvas.width = h;
   canvas.height = w;
   const ctx = canvas.getContext('2d');
-  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.translate(h, 0);
   ctx.rotate(Math.PI / 2);
-  ctx.drawImage(img, -w / 2, -h / 2, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
   return canvas.toDataURL('image/png');
 }
 
