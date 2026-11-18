@@ -511,8 +511,81 @@ catalogGrid.addEventListener('change', (e) => {
   setLabelSheets(input.dataset.id, input.value);
 });
 
-clearSelectionBtn.addEventListener('click', clearCartSelection);
-drawerClearBtn.addEventListener('click', clearCartSelection);
+// Caixa de confirmação reutilizável (usa as classes de modal já existentes)
+function confirmDialog({ title, message, confirmText = 'Confirmar', cancelText = 'Cancelar', danger = false }) {
+  return new Promise((resolve) => {
+    const previouslyFocused = document.activeElement;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMsg">
+        <div class="modal-header">
+          <h3 id="confirmTitle">${escHtml(title)}</h3>
+        </div>
+        <p id="confirmMsg" style="color: var(--text-secondary); margin-bottom: 18px;">${escHtml(message)}</p>
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary" data-confirm="no">${escHtml(cancelText)}</button>
+          <button type="button" class="${danger ? 'btn-danger-solid' : 'btn-primary'}" data-confirm="yes">${escHtml(confirmText)}</button>
+        </div>
+      </div>`;
+
+    const cancelBtn = overlay.querySelector('[data-confirm="no"]');
+    const okBtn = overlay.querySelector('[data-confirm="yes"]');
+
+    function close(result) {
+      document.removeEventListener('keydown', onKey, true);
+      overlay.remove();
+      if (previouslyFocused && typeof previouslyFocused.focus === 'function') previouslyFocused.focus();
+      resolve(result);
+    }
+
+    function onKey(e) {
+      if (e.key === 'Escape') {
+        // fecha só a confirmação, sem fechar o checkout que está por trás
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        close(false);
+      } else if (e.key === 'Tab') {
+        // mantém o foco dentro da caixa
+        e.preventDefault();
+        (document.activeElement === cancelBtn ? okBtn : cancelBtn).focus();
+      }
+    }
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close(false);
+      const btn = e.target.closest('[data-confirm]');
+      if (btn) close(btn.dataset.confirm === 'yes');
+    });
+
+    document.addEventListener('keydown', onKey, true);
+    document.body.appendChild(overlay);
+    cancelBtn.focus(); // foco no "Cancelar": evita confirmar sem querer com Enter
+  });
+}
+
+async function requestClearSelection() {
+  const summary = calculateCheckoutSummary(labels, cart);
+  if (summary.totalSheets === 0) return;
+
+  const sheets = `${summary.totalSheets} ${summary.totalSheets === 1 ? 'folha' : 'folhas'}`;
+  const models = `${summary.totalModels} ${summary.totalModels === 1 ? 'modelo' : 'modelos'}`;
+
+  const ok = await confirmDialog({
+    title: 'Limpar seleção?',
+    message: `Isso remove ${sheets} (${models}, ${summary.totalStickers} etiquetas) da seleção. As etiquetas continuam no catálogo.`,
+    confirmText: 'Limpar seleção',
+    cancelText: 'Cancelar',
+    danger: true
+  });
+  if (!ok) return;
+
+  await clearCartSelection();
+  showToast('Seleção limpa.');
+}
+
+clearSelectionBtn.addEventListener('click', requestClearSelection);
+drawerClearBtn.addEventListener('click', requestClearSelection);
 
 checkoutItemsList.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-checkout-action]');
