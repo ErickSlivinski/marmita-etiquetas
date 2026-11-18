@@ -133,9 +133,15 @@ body {
 }
 
 .checkout-count {
-  background: rgba(255, 255, 255, 0.25);
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-left: none;
+  background: rgba(255, 255, 255, 0.22);
   color: #ffffff;
   border-radius: 999px;
+  line-height: 1;
 }
 
 .btn-secondary,
