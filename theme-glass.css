@@ -388,11 +388,18 @@ body {
 .progress-card,
 .toast-item {
   background: var(--glass-strong);
+  color: var(--text-primary);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-edge);
   border-radius: var(--radius-md);
   box-shadow: var(--glass-shadow-hover);
+}
+
+.toast-item.error {
+  background: var(--danger);
+  border-color: transparent;
+  color: #ffffff;
 }
 
 .progress-bar {

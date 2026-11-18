@@ -142,7 +142,7 @@
             <p>Envie arquivos PDF, imagens PNG/JPG/WEBP ou um pacote ZIP. O sistema lê o texto automaticamente para sugerir o nome e a categoria de cada marmita.</p>
             <div class="empty-actions">
               <button type="button" class="btn-primary" id="emptyUploadBtn">Selecionar arquivos</button>
-              <button type="button" class="btn-secondary" id="loadDemoBtn">Carregar 6 etiquetas de exemplo</button>
+              <button type="button" class="btn-secondary" id="loadDemoBtn">Carregar etiquetas de exemplo</button>
             </div>
           </div>
         </section>
@@ -208,7 +208,7 @@
           <label for="exportFilenameInput">Nome do arquivo PDF</label>
           <input type="text" id="exportFilenameInput" class="text-input" placeholder="etiquetas_impressao" />
         </div>
-        <p class="print-spec-note">Formato A4 Paisagem (297 × 210 mm) · 4 × 6 = 24 etiquetas/folha com guias de corte</p>
+        <p class="print-spec-note" id="printSpecNote">Formato A4 Paisagem (297 × 210 mm) · 4 × 6 = 24 etiquetas/folha com guias de corte</p>
         <div class="drawer-footer-actions">
           <button type="button" class="btn-secondary" id="drawerClearBtn">Limpar lista</button>
           <button type="button" class="btn-primary" id="generatePdfBtn">Gerar e Baixar PDF Completo</button>
@@ -237,6 +237,14 @@
         <div class="form-field">
           <label for="editCategorySelect">Categoria</label>
           <select id="editCategorySelect" class="text-input"></select>
+        </div>
+        <div class="form-field">
+          <label for="editFormatSelect">Tamanho da etiqueta e layout A4</label>
+          <select id="editFormatSelect" class="text-input">
+            <option value="6x3">Comum — 6 × 3 cm (24/folha · A4 Paisagem)</option>
+            <option value="10x4">Sucos — 10 × 4 cm (14/folha · A4 Retrato)</option>
+          </select>
+          <span class="field-hint" id="editFormatHint" hidden></span>
         </div>
         <div class="form-field inline-create-cat">
           <label for="quickNewCatInput">Ou criar nova categoria rapidamente</label>

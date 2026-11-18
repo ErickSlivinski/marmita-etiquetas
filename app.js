@@ -1,13 +1,21 @@
 /**
  * EtiquetaFit — Dashboard & Label Marketplace Controller
- * A4 landscape PDF export: 4 cols × 6 rows = 24 labels per sheet (60×30mm nominal)
+ * Supports mixed A4 PDF export:
+ * - Comum (6×3 cm): A4 Paisagem, 4 cols × 6 rows = 24 labels/sheet
+ * - Sucos (10×4 cm): A4 Retrato, 2 cols × 7 rows = 14 labels/sheet
  */
 
 import {
   DEFAULT_CATEGORIES,
-  LABELS_PER_SHEET,
+  LABEL_FORMATS,
   MAX_SHEETS_PER_LABEL,
   cleanOcrLabelName,
+  detectFormatFromDimensions,
+  resolveLabelFormat,
+  getLabelFormatSpec,
+  isSucosCategory,
+  findSucosCategoryId,
+  normalizeText,
   inferCategoryFromText,
   filterAndSortLabels,
   getCategoryCounts,
@@ -28,16 +36,6 @@ import {
 } from './lib/storage.js';
 
 import { generateDemoLabels } from './lib/demoLabels.js';
-
-// ─── PDF Layout Constants ────────────────────────────────────────────────────
-
-const A4_W_MM = 297;
-const A4_H_MM = 210;
-const COLS = 4;
-const ROWS = 6;
-const MARGIN_MM = 5;
-const LABEL_W_MM = (A4_W_MM - 2 * MARGIN_MM) / COLS;
-const LABEL_H_MM = (A4_H_MM - 2 * MARGIN_MM) / ROWS;
 
 // Configure PDF.js worker if loaded
 if (window.pdfjsLib) {
@@ -100,6 +98,7 @@ const exportSuccessBox = document.getElementById('exportSuccessBox');
 const exportSuccessMeta = document.getElementById('exportSuccessMeta');
 const exportDownloadAgainLink = document.getElementById('exportDownloadAgainLink');
 const exportFilenameInput = document.getElementById('exportFilenameInput');
+const printSpecNote = document.getElementById('printSpecNote');
 const drawerClearBtn = document.getElementById('drawerClearBtn');
 const generatePdfBtn = document.getElementById('generatePdfBtn');
 
@@ -110,6 +109,8 @@ const editModalThumb = document.getElementById('editModalThumb');
 const editLabelForm = document.getElementById('editLabelForm');
 const editNameInput = document.getElementById('editNameInput');
 const editCategorySelect = document.getElementById('editCategorySelect');
+const editFormatSelect = document.getElementById('editFormatSelect');
+const editFormatHint = document.getElementById('editFormatHint');
 const quickNewCatInput = document.getElementById('quickNewCatInput');
 const quickAddCatBtn = document.getElementById('quickAddCatBtn');
 const closeEditModal = document.getElementById('closeEditModal');
@@ -159,7 +160,13 @@ async function init() {
     loadCart()
   ]);
 
-  categories = loadedCategories.length > 0 ? loadedCategories : [...DEFAULT_CATEGORIES];
+  const rawCategories = loadedCategories.length > 0 ? loadedCategories : [...DEFAULT_CATEGORIES];
+  categories = rawCategories.map(c => ({
+    ...c,
+    defaultFormat: LABEL_FORMATS[c.defaultFormat]
+      ? c.defaultFormat
+      : (/\bsucos?\b/.test(normalizeText(c.name)) || c.id === 'sucos' ? '10x4' : '6x3')
+  }));
   if (loadedCategories.length === 0) {
     await saveCategories(categories);
   }
@@ -167,6 +174,7 @@ async function init() {
   labels = loadedLabels.map(l => ({
     ...l,
     categoryId: l.categoryId || 'sem-categoria',
+    format: LABEL_FORMATS[l.format] ? l.format : undefined,
     createdAt: l.createdAt || Date.now()
   }));
 
@@ -367,7 +375,8 @@ function renderCatalogGrid() {
     card.className = `label-card${qty > 0 ? ' selected' : ''}`;
     card.dataset.id = label.id;
 
-    const totalUnits = qty * LABELS_PER_SHEET;
+    const spec = getLabelFormatSpec(label, categories);
+    const totalUnits = qty * spec.labelsPerSheet;
     const catName = getCategoryName(label.categoryId);
 
     card.innerHTML = `
@@ -376,9 +385,9 @@ function renderCatalogGrid() {
       </button>
       <div class="card-body">
         <div class="card-meta-row">
-          <span class="card-meta-text">${escHtml(catName)} · 6×3 cm</span>
+          <span class="card-meta-text">${escHtml(catName)} · ${spec.shortDim}</span>
           <div class="card-icon-actions">
-            <button type="button" class="icon-btn" data-action="edit" data-id="${label.id}" aria-label="Editar ${escHtml(label.name)}" title="Editar nome e categoria">
+            <button type="button" class="icon-btn" data-action="edit" data-id="${label.id}" aria-label="Editar ${escHtml(label.name)}" title="Editar nome, categoria e tamanho">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
             </button>
             <button type="button" class="icon-btn danger" data-action="delete" data-id="${label.id}" aria-label="Excluir ${escHtml(label.name)}" title="Excluir etiqueta">
@@ -407,7 +416,7 @@ function renderCatalogGrid() {
 }
 
 function renderCheckoutSummary() {
-  const summary = calculateCheckoutSummary(labels, cart);
+  const summary = calculateCheckoutSummary(labels, cart, categories);
   checkoutCountBadge.textContent = `${summary.totalSheets} ${summary.totalSheets === 1 ? 'folha' : 'folhas'}`;
 
   if (summary.totalSheets === 0) {
@@ -421,6 +430,19 @@ function renderCheckoutSummary() {
   summaryModels.textContent = String(summary.totalModels);
   summarySheets.textContent = String(summary.totalSheets);
   summaryStickers.textContent = String(summary.totalStickers);
+
+  const hasStd = summary.sheetsByFormat['6x3'] > 0;
+  const hasJuice = summary.sheetsByFormat['10x4'] > 0;
+  if (hasStd && hasJuice) {
+    printSpecNote.textContent =
+      'PDF misto: Comuns em A4 Paisagem (4×6 = 24/folha · 6×3 cm) + Sucos em A4 Retrato (2×7 = 14/folha · 10×4 cm)';
+  } else if (hasJuice) {
+    printSpecNote.textContent =
+      'Formato A4 Retrato (210 × 297 mm) · 2 × 7 = 14 etiquetas/folha (10×4 cm) com guias de corte';
+  } else {
+    printSpecNote.textContent =
+      'Formato A4 Paisagem (297 × 210 mm) · 4 × 6 = 24 etiquetas/folha (6×3 cm) com guias de corte';
+  }
 
   generatePdfBtn.disabled = summary.totalSheets === 0;
   drawerClearBtn.disabled = summary.totalSheets === 0;
@@ -447,12 +469,13 @@ function renderCheckoutItems(summary) {
     const row = document.createElement('div');
     row.className = 'checkout-item';
     const catName = getCategoryName(item.label.categoryId);
+    const spec = LABEL_FORMATS[item.format] || LABEL_FORMATS['6x3'];
 
     row.innerHTML = `
       <img class="checkout-thumb" src="${item.label.dataUrl}" alt="${escHtml(item.label.name)}" />
       <div class="checkout-item-info">
         <div class="checkout-item-name" title="${escHtml(item.label.name)}">${escHtml(item.label.name)}</div>
-        <div class="checkout-item-meta tabular-nums">${escHtml(catName)} · ${item.totalStickers} etiquetas</div>
+        <div class="checkout-item-meta tabular-nums">${escHtml(catName)} · ${spec.shortDim} · ${item.totalStickers} etiquetas</div>
       </div>
       <div class="checkout-item-controls">
         <div class="qty-stepper">
@@ -565,7 +588,7 @@ function confirmDialog({ title, message, confirmText = 'Confirmar', cancelText =
 }
 
 async function requestClearSelection() {
-  const summary = calculateCheckoutSummary(labels, cart);
+  const summary = calculateCheckoutSummary(labels, cart, categories);
   if (summary.totalSheets === 0) return;
 
   const sheets = `${summary.totalSheets} ${summary.totalSheets === 1 ? 'folha' : 'folhas'}`;
@@ -655,7 +678,7 @@ loadDemoBtn.addEventListener('click', async () => {
   labels = [...labels, ...samples];
   await saveLabels(labels);
   renderAll();
-  showToast('6 etiquetas de exemplo carregadas no catálogo.');
+  showToast(`${samples.length} etiquetas de exemplo carregadas no catálogo.`);
 });
 
 // ─── File Upload (Images, PDF, ZIP) + OCR ────────────────────────────────────
@@ -809,32 +832,87 @@ async function extractItemsFromPdf(pdfBlobOrFile, baseNameOverride) {
   return items;
 }
 
+async function getImageDimensions(dataUrl) {
+  try {
+    const img = await loadImage(dataUrl);
+    return {
+      width: img.naturalWidth || img.width || 0,
+      height: img.naturalHeight || img.height || 0
+    };
+  } catch {
+    return { width: 0, height: 0 };
+  }
+}
+
+async function ensureSucosCategoryIfNeeded() {
+  let sucosId = findSucosCategoryId(categories);
+  if (sucosId) return sucosId;
+
+  const newCat = {
+    id: createCategorySlug('Sucos', categories),
+    name: 'Sucos',
+    defaultFormat: '10x4'
+  };
+  const semCatIdx = categories.findIndex(c => c.id === 'sem-categoria');
+  if (semCatIdx >= 0) {
+    categories.splice(semCatIdx, 0, newCat);
+  } else {
+    categories.push(newCat);
+  }
+  await saveCategories(categories);
+  return newCat.id;
+}
+
 async function recognizeLabelMetadata(dataUrl, fallbackName) {
+  const dims = await getImageDimensions(dataUrl);
+  const detectedFormat = detectFormatFromDimensions(dims.width, dims.height);
+
+  if (detectedFormat === '10x4') {
+    await ensureSucosCategoryIfNeeded();
+  }
+
+  let ocrText = '';
+  let name = fallbackName;
   try {
     if (!window.Tesseract) throw new Error('Tesseract não carregado');
     if (!tesseractWorker) {
       tesseractWorker = await window.Tesseract.createWorker('por');
     }
     const { data: { text } } = await tesseractWorker.recognize(dataUrl);
-    const name = cleanOcrLabelName(text, fallbackName);
-    const categoryId = inferCategoryFromText(`${name} ${text}`, categories);
-    return { name, categoryId };
+    ocrText = text || '';
+    name = cleanOcrLabelName(ocrText, fallbackName);
   } catch (err) {
     console.warn('Fallback de OCR aplicado:', err);
-    const categoryId = inferCategoryFromText(fallbackName, categories);
-    return { name: fallbackName, categoryId };
   }
+
+  const categoryId = inferCategoryFromText(`${name} ${ocrText}`, categories, detectedFormat);
+  const finalFormat =
+    detectedFormat === '10x4' || isSucosCategory(categoryId, categories)
+      ? '10x4'
+      : '6x3';
+
+  return {
+    name,
+    categoryId,
+    detectedFormat: finalFormat,
+    autoDetectedBySize: detectedFormat === '10x4',
+    dimensions: dims
+  };
 }
 
 async function processSingleItemWithConfirm(item) {
-  showProgress('Lendo conteúdo da etiqueta...', 50);
-  const { name, categoryId } = await recognizeLabelMetadata(item.dataUrl, item.fallbackName);
+  showProgress('Lendo conteúdo e dimensões da etiqueta...', 50);
+  const { name, categoryId, detectedFormat, autoDetectedBySize, dimensions } =
+    await recognizeLabelMetadata(item.dataUrl, item.fallbackName);
   hideProgress();
 
   await new Promise((resolve) => {
     openCreateConfirmModal({
       name,
       categoryId,
+      format: detectedFormat,
+      autoDetectedBySize,
+      dimensions,
       dataUrl: item.dataUrl,
       onDone: resolve
     });
@@ -843,6 +921,7 @@ async function processSingleItemWithConfirm(item) {
 
 async function processBatchItems(items) {
   let added = 0;
+  let juiceCount = 0;
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     showProgress(
@@ -850,7 +929,7 @@ async function processBatchItems(items) {
       ((i + 1) / items.length) * 100
     );
 
-    const { name, categoryId } = await recognizeLabelMetadata(item.dataUrl, item.fallbackName);
+    const { name, categoryId, detectedFormat } = await recognizeLabelMetadata(item.dataUrl, item.fallbackName);
     const duplicate = labels.some(l => l.name.toLowerCase() === name.toLowerCase());
 
     if (!duplicate) {
@@ -858,16 +937,19 @@ async function processBatchItems(items) {
         id: crypto.randomUUID(),
         name,
         categoryId,
+        format: detectedFormat,
         dataUrl: item.dataUrl,
         createdAt: Date.now() - i
       });
       added++;
+      if (detectedFormat === '10x4') juiceCount++;
     }
   }
 
   await saveLabels(labels);
   renderAll();
-  showToast(`${added} ${added === 1 ? 'etiqueta importada' : 'etiquetas importadas'} com sucesso.`);
+  const juiceNote = juiceCount > 0 ? ` (${juiceCount} no formato Sucos 10×4 cm)` : '';
+  showToast(`${added} ${added === 1 ? 'etiqueta importada' : 'etiquetas importadas'}${juiceNote}.`);
 }
 
 // ─── Edit / Create Confirm Label Modal ───────────────────────────────────────
@@ -883,13 +965,37 @@ function populateCategorySelect(selectedId) {
   }
 }
 
-function openCreateConfirmModal({ name, categoryId, dataUrl, onDone }) {
+function setFormatHint(text) {
+  if (text) {
+    editFormatHint.textContent = text;
+    editFormatHint.hidden = false;
+  } else {
+    editFormatHint.textContent = '';
+    editFormatHint.hidden = true;
+  }
+}
+
+function openCreateConfirmModal({ name, categoryId, format, autoDetectedBySize, dimensions, dataUrl, onDone }) {
+  const resolvedFormat = format || (isSucosCategory(categoryId, categories) ? '10x4' : '6x3');
   activeEditContext = { mode: 'create', dataUrl, onDone };
   editModalTitle.textContent = 'Confirmar Nova Etiqueta';
   editModalThumb.src = dataUrl;
   editNameInput.value = name;
   quickNewCatInput.value = '';
   populateCategorySelect(categoryId);
+  editFormatSelect.value = resolvedFormat;
+
+  if (autoDetectedBySize) {
+    const ratioTxt = dimensions?.width && dimensions?.height
+      ? ` (${dimensions.width}×${dimensions.height}px)`
+      : '';
+    setFormatHint(`Proporção 10×4 cm detectada automaticamente${ratioTxt} — categoria Sucos selecionada (14/folha).`);
+  } else if (resolvedFormat === '10x4') {
+    setFormatHint('Formato Sucos 10×4 cm selecionado (14/folha · A4 Retrato).');
+  } else {
+    setFormatHint('Tamanho padrão 6×3 cm detectado (24/folha · A4 Paisagem).');
+  }
+
   editLabelModal.hidden = false;
   setTimeout(() => {
     editNameInput.focus();
@@ -906,6 +1012,8 @@ function openEditModalForLabel(id) {
   editNameInput.value = label.name;
   quickNewCatInput.value = '';
   populateCategorySelect(label.categoryId || 'sem-categoria');
+  editFormatSelect.value = resolveLabelFormat(label, categories);
+  setFormatHint('');
   editLabelModal.hidden = false;
   setTimeout(() => {
     editNameInput.focus();
@@ -927,6 +1035,25 @@ editLabelModal.addEventListener('click', (e) => {
   if (e.target === editLabelModal) closeEditLabelModal();
 });
 
+editCategorySelect.addEventListener('change', () => {
+  const selectedCatId = editCategorySelect.value;
+  if (isSucosCategory(selectedCatId, categories)) {
+    editFormatSelect.value = '10x4';
+    setFormatHint('Categoria Sucos utiliza layout 10×4 cm (14/folha · A4 Retrato).');
+  } else {
+    editFormatSelect.value = '6x3';
+    setFormatHint('Categoria padrão utiliza layout 6×3 cm (24/folha · A4 Paisagem).');
+  }
+});
+
+editFormatSelect.addEventListener('change', () => {
+  if (editFormatSelect.value === '10x4') {
+    setFormatHint('Layout 10×4 cm: 2×7 = 14 etiquetas por folha A4 Retrato.');
+  } else {
+    setFormatHint('Layout 6×3 cm: 4×6 = 24 etiquetas por folha A4 Paisagem.');
+  }
+});
+
 quickAddCatBtn.addEventListener('click', async () => {
   const rawName = quickNewCatInput.value.trim();
   if (!rawName) return;
@@ -934,6 +1061,9 @@ quickAddCatBtn.addEventListener('click', async () => {
   const newCat = await addCategory(rawName);
   if (newCat) {
     populateCategorySelect(newCat.id);
+    if (newCat.defaultFormat === '10x4') {
+      editFormatSelect.value = '10x4';
+    }
     quickNewCatInput.value = '';
     showToast(`Categoria "${newCat.name}" criada.`);
   }
@@ -945,12 +1075,14 @@ editLabelForm.addEventListener('submit', async (e) => {
   if (!cleanName) return;
 
   const chosenCategoryId = editCategorySelect.value || 'sem-categoria';
+  const chosenFormat = editFormatSelect.value === '10x4' ? '10x4' : '6x3';
 
   if (activeEditContext?.mode === 'create') {
     labels.unshift({
       id: crypto.randomUUID(),
       name: cleanName,
       categoryId: chosenCategoryId,
+      format: chosenFormat,
       dataUrl: activeEditContext.dataUrl,
       createdAt: Date.now()
     });
@@ -961,6 +1093,7 @@ editLabelForm.addEventListener('submit', async (e) => {
     if (target) {
       target.name = cleanName;
       target.categoryId = chosenCategoryId;
+      target.format = chosenFormat;
       await saveLabels(labels);
       showToast('Etiqueta atualizada.');
     }
@@ -995,7 +1128,8 @@ async function addCategory(rawName) {
 
   const newCat = {
     id: createCategorySlug(name, categories),
-    name
+    name,
+    defaultFormat: /\bsucos?\b/.test(normalizeText(name)) ? '10x4' : '6x3'
   };
 
   // Keep "Sem Categoria" at the end
@@ -1017,6 +1151,9 @@ function renderCategoriesManager() {
 
   for (const cat of categories) {
     const isProtected = cat.id === 'sem-categoria';
+    const catFormat = LABEL_FORMATS[cat.defaultFormat]
+      ? cat.defaultFormat
+      : (isSucosCategory(cat.id, categories) ? '10x4' : '6x3');
     const row = document.createElement('div');
     row.className = 'cat-manager-row';
 
@@ -1029,6 +1166,15 @@ function renderCategoriesManager() {
         aria-label="Nome da categoria ${escHtml(cat.name)}"
         ${isProtected ? 'disabled' : ''}
       />
+      <select
+        class="text-input cat-format-select"
+        data-cat-format="${cat.id}"
+        aria-label="Layout padrão para ${escHtml(cat.name)}"
+        title="Formato padrão de impressão"
+      >
+        <option value="6x3"${catFormat === '6x3' ? ' selected' : ''}>6×3 cm (24/fl)</option>
+        <option value="10x4"${catFormat === '10x4' ? ' selected' : ''}>10×4 cm (14/fl)</option>
+      </select>
       <span class="cat-manager-count tabular-nums">${counts[cat.id] || 0} itens</span>
       ${
         isProtected
@@ -1069,6 +1215,18 @@ addCategoryForm.addEventListener('submit', async (e) => {
 });
 
 categoriesManagerList.addEventListener('change', async (e) => {
+  const formatSelect = e.target.closest('[data-cat-format]');
+  if (formatSelect) {
+    const id = formatSelect.dataset.catFormat;
+    const cat = categories.find(c => c.id === id);
+    if (!cat) return;
+    cat.defaultFormat = formatSelect.value === '10x4' ? '10x4' : '6x3';
+    await saveCategories(categories);
+    renderAll();
+    showToast(`Layout da categoria "${cat.name}" atualizado.`);
+    return;
+  }
+
   const input = e.target.closest('[data-cat-rename]');
   if (!input) return;
   const id = input.dataset.catRename;
@@ -1112,9 +1270,10 @@ function openPreviewModal(id) {
   const label = labels.find(l => l.id === id);
   if (!label) return;
   activePreviewId = id;
+  const spec = getLabelFormatSpec(label, categories);
   previewImg.src = label.dataUrl;
   previewName.textContent = label.name;
-  previewMeta.textContent = `${getCategoryName(label.categoryId)} · 6×3 cm (24/folha)`;
+  previewMeta.textContent = `${getCategoryName(label.categoryId)} · ${spec.shortDim} (${spec.labelsPerSheet}/folha)`;
   previewModal.hidden = false;
 }
 
@@ -1146,7 +1305,7 @@ function openCheckoutDrawer() {
   if (!exportFilenameInput.value) {
     exportFilenameInput.value = `etiquetas_lote_${today}`;
   }
-  const summary = calculateCheckoutSummary(labels, cart);
+  const summary = calculateCheckoutSummary(labels, cart, categories);
   renderCheckoutItems(summary);
   checkoutOverlay.hidden = false;
 }
@@ -1164,7 +1323,7 @@ checkoutOverlay.addEventListener('click', (e) => {
 generatePdfBtn.addEventListener('click', generateCombinedPdf);
 
 async function generateCombinedPdf() {
-  const summary = calculateCheckoutSummary(labels, cart);
+  const summary = calculateCheckoutSummary(labels, cart, categories);
   if (summary.totalSheets === 0) return;
 
   if (!window.jspdf?.jsPDF) {
@@ -1176,38 +1335,50 @@ async function generateCombinedPdf() {
 
   try {
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const firstSpec = LABEL_FORMATS[summary.items[0].format] || LABEL_FORMATS['6x3'];
+    const doc = new jsPDF({ orientation: firstSpec.orientation, unit: 'mm', format: 'a4' });
 
     let currentSheet = 0;
     let isFirstPage = true;
 
     for (const item of summary.items) {
       const img = await loadImage(item.label.dataUrl);
+      const spec = LABEL_FORMATS[item.format] || LABEL_FORMATS['6x3'];
 
       for (let s = 0; s < item.sheets; s++) {
         if (!isFirstPage) {
-          doc.addPage('a4', 'landscape');
+          doc.addPage('a4', spec.orientation);
         }
         isFirstPage = false;
 
-        for (let row = 0; row < ROWS; row++) {
-          for (let col = 0; col < COLS; col++) {
-            const x = MARGIN_MM + col * LABEL_W_MM;
-            const y = MARGIN_MM + row * LABEL_H_MM;
-            doc.addImage(img, 'PNG', x, y, LABEL_W_MM, LABEL_H_MM, undefined, 'FAST');
+        for (let row = 0; row < spec.rows; row++) {
+          for (let col = 0; col < spec.cols; col++) {
+            const x = spec.marginX + col * (spec.labelW + spec.gapX);
+            const y = spec.marginY + row * (spec.labelH + spec.gapY);
+            doc.addImage(img, 'PNG', x, y, spec.labelW, spec.labelH, undefined, 'FAST');
           }
         }
 
-        // Light cutting guide grid
+        // Light cutting guide lines
         doc.setDrawColor(200, 200, 200);
         doc.setLineWidth(0.1);
-        for (let col = 0; col <= COLS; col++) {
-          const x = MARGIN_X_MM_VAL(col);
-          doc.line(x, MARGIN_MM, x, MARGIN_MM + ROWS * LABEL_H_MM);
-        }
-        for (let row = 0; row <= ROWS; row++) {
-          const y = MARGIN_Y_MM_VAL(row);
-          doc.line(MARGIN_MM, y, MARGIN_MM + COLS * LABEL_W_MM, y);
+        if (spec.gapX === 0 && spec.gapY === 0) {
+          for (let col = 0; col <= spec.cols; col++) {
+            const x = spec.marginX + col * spec.labelW;
+            doc.line(x, spec.marginY, x, spec.marginY + spec.rows * spec.labelH);
+          }
+          for (let row = 0; row <= spec.rows; row++) {
+            const y = spec.marginY + row * spec.labelH;
+            doc.line(spec.marginX, y, spec.marginX + spec.cols * spec.labelW, y);
+          }
+        } else {
+          for (let row = 0; row < spec.rows; row++) {
+            for (let col = 0; col < spec.cols; col++) {
+              const x = spec.marginX + col * (spec.labelW + spec.gapX);
+              const y = spec.marginY + row * (spec.labelH + spec.gapY);
+              doc.rect(x, y, spec.labelW, spec.labelH);
+            }
+          }
         }
 
         currentSheet++;
@@ -1246,14 +1417,6 @@ async function generateCombinedPdf() {
   } finally {
     hideProgress();
   }
-}
-
-function MARGIN_X_MM_VAL(col) {
-  return MARGIN_MM + col * LABEL_W_MM;
-}
-
-function MARGIN_Y_MM_VAL(row) {
-  return MARGIN_MM + row * LABEL_H_MM;
 }
 
 function loadImage(src) {
@@ -1345,6 +1508,7 @@ importInput.addEventListener('change', (e) => {
             id: crypto.randomUUID(),
             name: item.name,
             categoryId: categories.some(c => c.id === item.categoryId) ? item.categoryId : 'sem-categoria',
+            format: item.format,
             dataUrl: item.dataUrl,
             createdAt: item.createdAt || Date.now()
           });
