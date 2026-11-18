@@ -1,8 +1,8 @@
 /**
  * EtiquetaFit — Dashboard & Label Marketplace Controller
- * Supports mixed A4 PDF export:
- * - Comum (6×3 cm): A4 Paisagem, 4 cols × 6 rows = 24 labels/sheet
- * - Sucos (10×4 cm): A4 Retrato, 2 cols × 7 rows = 14 labels/sheet
+ * Standardized A4 Paisagem (297 × 210 mm) PDF export:
+ * - Comum (6×3 cm): 4 cols × 6 rows = 24 labels/sheet
+ * - Sucos (10×4 cm): 7 cols × 2 rows = 14 labels/sheet (rotated 90°, edge-to-edge)
  */
 
 import {
@@ -435,10 +435,10 @@ function renderCheckoutSummary() {
   const hasJuice = summary.sheetsByFormat['10x4'] > 0;
   if (hasStd && hasJuice) {
     printSpecNote.textContent =
-      'PDF misto: Comuns em A4 Paisagem (4×6 = 24/folha · 6×3 cm) + Sucos em A4 Retrato (2×7 = 14/folha · 10×4 cm)';
+      'A4 Paisagem (297 × 210 mm): Comuns 4×6 (24/folha · 6×3 cm) + Sucos 7×2 (14/folha · 10×4 cm)';
   } else if (hasJuice) {
     printSpecNote.textContent =
-      'Formato A4 Retrato (210 × 297 mm) · 2 × 7 = 14 etiquetas/folha (10×4 cm) com guias de corte';
+      'Formato A4 Paisagem (297 × 210 mm) · 7 × 2 = 14 etiquetas/folha (10×4 cm) coladas com guias de corte';
   } else {
     printSpecNote.textContent =
       'Formato A4 Paisagem (297 × 210 mm) · 4 × 6 = 24 etiquetas/folha (6×3 cm) com guias de corte';
@@ -989,9 +989,9 @@ function openCreateConfirmModal({ name, categoryId, format, autoDetectedBySize, 
     const ratioTxt = dimensions?.width && dimensions?.height
       ? ` (${dimensions.width}×${dimensions.height}px)`
       : '';
-    setFormatHint(`Proporção 10×4 cm detectada automaticamente${ratioTxt} — categoria Sucos selecionada (14/folha).`);
+    setFormatHint(`Proporção 10×4 cm detectada automaticamente${ratioTxt} — categoria Sucos selecionada (14/folha · A4 Paisagem).`);
   } else if (resolvedFormat === '10x4') {
-    setFormatHint('Formato Sucos 10×4 cm selecionado (14/folha · A4 Retrato).');
+    setFormatHint('Formato Sucos 10×4 cm selecionado (14/folha · A4 Paisagem).');
   } else {
     setFormatHint('Tamanho padrão 6×3 cm detectado (24/folha · A4 Paisagem).');
   }
@@ -1039,16 +1039,16 @@ editCategorySelect.addEventListener('change', () => {
   const selectedCatId = editCategorySelect.value;
   if (isSucosCategory(selectedCatId, categories)) {
     editFormatSelect.value = '10x4';
-    setFormatHint('Categoria Sucos utiliza layout 10×4 cm (14/folha · A4 Retrato).');
+    setFormatHint('Categoria Sucos utiliza layout 10×4 cm (7×2 = 14/folha · A4 Paisagem).');
   } else {
     editFormatSelect.value = '6x3';
-    setFormatHint('Categoria padrão utiliza layout 6×3 cm (24/folha · A4 Paisagem).');
+    setFormatHint('Categoria padrão utiliza layout 6×3 cm (4×6 = 24/folha · A4 Paisagem).');
   }
 });
 
 editFormatSelect.addEventListener('change', () => {
   if (editFormatSelect.value === '10x4') {
-    setFormatHint('Layout 10×4 cm: 2×7 = 14 etiquetas por folha A4 Retrato.');
+    setFormatHint('Layout 10×4 cm: 7×2 = 14 etiquetas por folha A4 Paisagem.');
   } else {
     setFormatHint('Layout 6×3 cm: 4×6 = 24 etiquetas por folha A4 Paisagem.');
   }
@@ -1342,8 +1342,9 @@ async function generateCombinedPdf() {
     let isFirstPage = true;
 
     for (const item of summary.items) {
-      const img = await loadImage(item.label.dataUrl);
+      const rawImg = await loadImage(item.label.dataUrl);
       const spec = LABEL_FORMATS[item.format] || LABEL_FORMATS['6x3'];
+      const printableImage = spec.rotate90 ? rotateImage90(rawImg) : rawImg;
 
       for (let s = 0; s < item.sheets; s++) {
         if (!isFirstPage) {
@@ -1355,7 +1356,7 @@ async function generateCombinedPdf() {
           for (let col = 0; col < spec.cols; col++) {
             const x = spec.marginX + col * (spec.labelW + spec.gapX);
             const y = spec.marginY + row * (spec.labelH + spec.gapY);
-            doc.addImage(img, 'PNG', x, y, spec.labelW, spec.labelH, undefined, 'FAST');
+            doc.addImage(printableImage, 'PNG', x, y, spec.labelW, spec.labelH, undefined, 'FAST');
           }
         }
 
@@ -1417,6 +1418,19 @@ async function generateCombinedPdf() {
   } finally {
     hideProgress();
   }
+}
+
+function rotateImage90(img) {
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  const canvas = document.createElement('canvas');
+  canvas.width = h;
+  canvas.height = w;
+  const ctx = canvas.getContext('2d');
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate(Math.PI / 2);
+  ctx.drawImage(img, -w / 2, -h / 2, w, h);
+  return canvas.toDataURL('image/png');
 }
 
 function loadImage(src) {
