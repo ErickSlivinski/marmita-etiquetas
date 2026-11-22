@@ -94,6 +94,7 @@ a:focus-visible {
 .app-shell {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -105,6 +106,7 @@ a:focus-visible {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   z-index: 40;
 }
 
@@ -314,6 +316,7 @@ a:focus-visible {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -411,7 +414,12 @@ a:focus-visible {
 .topbar-actions {
   display: flex;
   align-items: center;
+  gap: 8px;
   flex-shrink: 0;
+}
+
+.topbar-actions .mobile-backup-btn {
+  display: none;
 }
 
 .checkout-trigger-btn {
@@ -825,6 +833,10 @@ a:focus-visible {
 }
 
 .btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
   min-height: 40px;
   padding: 8px 16px;
   background: var(--bg-surface);
@@ -935,6 +947,7 @@ a:focus-visible {
 .checkout-drawer {
   width: min(460px, 100vw);
   height: 100vh;
+  height: 100dvh;
   background: var(--bg-surface);
   border-left: 1px solid var(--border);
   box-shadow: var(--shadow-drawer);
@@ -1130,6 +1143,7 @@ a:focus-visible {
 .modal {
   width: min(460px, 100%);
   max-height: 90vh;
+  max-height: 85dvh;
   overflow-y: auto;
   background: var(--bg-surface);
   border: 1px solid var(--border);
@@ -1430,6 +1444,10 @@ a:focus-visible {
     position: fixed;
     top: 0;
     left: 0;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
     transform: translateX(-100%);
     transition: transform 0.2s var(--ease);
     z-index: 90;
@@ -1439,6 +1457,28 @@ a:focus-visible {
     transform: translateX(0);
   }
 
+  .sidebar-brand {
+    order: 1;
+  }
+
+  .sidebar-block {
+    order: 2;
+  }
+
+  .sidebar-footer {
+    order: 3;
+    padding: 12px 16px;
+    border-top: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-categories-block {
+    order: 4;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  }
+
   .icon-btn.sidebar-close-btn,
   .icon-btn.mobile-menu-btn {
     display: inline-flex;
@@ -1446,7 +1486,7 @@ a:focus-visible {
 
   .topbar {
     padding: 0 12px;
-    gap: 10px;
+    gap: 8px;
     height: 58px;
   }
 
@@ -1454,12 +1494,43 @@ a:focus-visible {
     display: none;
   }
 
+  .topbar-actions .mobile-backup-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 40px;
+    height: 40px;
+    padding: 0 11px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .checkout-trigger-btn {
+    padding: 0 12px;
+  }
+
   .catalog-main {
-    padding: 14px 14px 28px;
+    padding: 14px 14px calc(92px + env(safe-area-inset-bottom, 0px));
   }
 
   .catalog-grid {
     grid-template-columns: 1fr;
+  }
+
+  .drawer-footer {
+    padding: 14px 16px calc(84px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .modal-overlay {
+    align-items: flex-start;
+    overflow-y: auto;
+    padding: 14px 12px calc(96px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .modal {
+    max-height: none;
+    margin: 0 auto;
+    padding: 18px;
   }
 
   .checkout-trigger-btn span:first-of-type {
@@ -1469,6 +1540,25 @@ a:focus-visible {
   .checkout-count {
     border-left: none;
     padding-left: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .mobile-backup-label {
+    display: none;
+  }
+
+  .mobile-backup-btn {
+    width: 40px;
+    padding: 0;
+  }
+
+  .settings-section .inline-row {
+    flex-wrap: wrap;
+  }
+
+  .settings-section .inline-row > * {
+    flex: 1 1 140px;
   }
 }
 

@@ -23,7 +23,7 @@ import {
   calculateCheckoutSummary,
   createCategorySlug,
   validateBackupPayload
-} from './lib/catalog.js?v=3';
+} from './lib/catalog.js?v=5';
 
 import {
   loadLabels,
@@ -33,9 +33,9 @@ import {
   loadCart,
   saveCart,
   clearAllStorage
-} from './lib/storage.js?v=3';
+} from './lib/storage.js?v=5';
 
-import { generateDemoLabels } from './lib/demoLabels.js?v=3';
+import { generateDemoLabels } from './lib/demoLabels.js?v=5';
 
 // Configure PDF.js worker if loaded
 if (window.pdfjsLib) {
@@ -84,6 +84,7 @@ const emptyLibraryState = document.getElementById('emptyLibraryState');
 const emptyFilterState = document.getElementById('emptyFilterState');
 const emptyFilterText = document.getElementById('emptyFilterText');
 const emptyUploadBtn = document.getElementById('emptyUploadBtn');
+const emptyRestoreBackupBtn = document.getElementById('emptyRestoreBackupBtn');
 const loadDemoBtn = document.getElementById('loadDemoBtn');
 const resetFiltersBtn = document.getElementById('resetFiltersBtn');
 
@@ -134,8 +135,10 @@ const previewAddSheetBtn = document.getElementById('previewAddSheetBtn');
 
 // Settings / Backup Modal
 const settingsBtn = document.getElementById('settingsBtn');
+const mobileBackupBtn = document.getElementById('mobileBackupBtn');
 const settingsModal = document.getElementById('settingsModal');
 const closeSettings = document.getElementById('closeSettings');
+const btnRestoreBundledBackup = document.getElementById('btnRestoreBundledBackup');
 const btnExportBackup = document.getElementById('btnExportBackup');
 const btnImportBackup = document.getElementById('btnImportBackup');
 const importInput = document.getElementById('importInput');
@@ -1444,12 +1447,16 @@ function loadImage(src) {
 
 // ─── Backup & Settings Modal ─────────────────────────────────────────────────
 
-settingsBtn.addEventListener('click', () => {
+function openSettingsModal() {
+  closeMobileSidebar();
   clearConfirmBox.hidden = true;
   clearConfirmInput.value = '';
   confirmClearBtn.disabled = true;
   settingsModal.hidden = false;
-});
+}
+
+settingsBtn.addEventListener('click', openSettingsModal);
+mobileBackupBtn?.addEventListener('click', openSettingsModal);
 
 closeSettings.addEventListener('click', () => {
   settingsModal.hidden = true;
@@ -1487,6 +1494,71 @@ btnExportBackup.addEventListener('click', () => {
   showToast('Backup JSON exportado.');
 });
 
+async function applyImportedBackup(parsed) {
+  const { labels: importedLabels, categories: importedCategories } = validateBackupPayload(parsed);
+
+  if (importedLabels.length === 0) {
+    showToast('Nenhuma etiqueta válida encontrada no arquivo.', true);
+    return;
+  }
+
+  for (const cat of importedCategories) {
+    if (!categories.some(c => c.id === cat.id)) {
+      const semCatIdx = categories.findIndex(c => c.id === 'sem-categoria');
+      if (semCatIdx >= 0) {
+        categories.splice(semCatIdx, 0, cat);
+      } else {
+        categories.push(cat);
+      }
+    }
+  }
+
+  let added = 0;
+  for (const item of importedLabels) {
+    const duplicate = labels.some(
+      l => l.name.toLowerCase() === item.name.toLowerCase() && l.dataUrl.length === item.dataUrl.length
+    );
+    if (!duplicate) {
+      labels.unshift({
+        id: crypto.randomUUID(),
+        name: item.name,
+        categoryId: categories.some(c => c.id === item.categoryId) ? item.categoryId : 'sem-categoria',
+        format: item.format,
+        dataUrl: item.dataUrl,
+        createdAt: item.createdAt || Date.now()
+      });
+      added++;
+    }
+  }
+
+  await Promise.all([saveCategories(categories), saveLabels(labels)]);
+  renderAll();
+  settingsModal.hidden = true;
+  showToast(
+    added > 0
+      ? `${added} ${added === 1 ? 'etiqueta importada' : 'etiquetas importadas'}.`
+      : 'Todas as etiquetas do arquivo já estavam cadastradas.'
+  );
+}
+
+async function restoreUpdatedBackupFromServer() {
+  showProgress('Carregando backup atualizado (83 etiquetas)...', 40);
+  try {
+    const res = await fetch('public/etiquetafit_backup_atualizado.json?v=5', { cache: 'no-store' });
+    if (!res.ok) throw new Error('Não foi possível baixar o backup atualizado.');
+    const parsed = await res.json();
+    updateProgress(85, 'Salvando etiquetas no catálogo...');
+    await applyImportedBackup(parsed);
+  } catch (err) {
+    showToast(err.message || 'Erro ao importar backup atualizado.', true);
+  } finally {
+    hideProgress();
+  }
+}
+
+btnRestoreBundledBackup.addEventListener('click', restoreUpdatedBackupFromServer);
+emptyRestoreBackupBtn.addEventListener('click', restoreUpdatedBackupFromServer);
+
 btnImportBackup.addEventListener('click', () => {
   importInput.click();
 });
@@ -1499,45 +1571,7 @@ importInput.addEventListener('change', (e) => {
   reader.onload = async (ev) => {
     try {
       const parsed = JSON.parse(ev.target.result);
-      const { labels: importedLabels, categories: importedCategories } = validateBackupPayload(parsed);
-
-      if (importedLabels.length === 0) {
-        showToast('Nenhuma etiqueta válida encontrada no arquivo.', true);
-        return;
-      }
-
-      for (const cat of importedCategories) {
-        if (!categories.some(c => c.id === cat.id)) {
-          categories.push(cat);
-        }
-      }
-
-      let added = 0;
-      for (const item of importedLabels) {
-        const duplicate = labels.some(
-          l => l.name.toLowerCase() === item.name.toLowerCase() && l.dataUrl.length === item.dataUrl.length
-        );
-        if (!duplicate) {
-          labels.unshift({
-            id: crypto.randomUUID(),
-            name: item.name,
-            categoryId: categories.some(c => c.id === item.categoryId) ? item.categoryId : 'sem-categoria',
-            format: item.format,
-            dataUrl: item.dataUrl,
-            createdAt: item.createdAt || Date.now()
-          });
-          added++;
-        }
-      }
-
-      await Promise.all([saveCategories(categories), saveLabels(labels)]);
-      renderAll();
-      settingsModal.hidden = true;
-      showToast(
-        added > 0
-          ? `${added} ${added === 1 ? 'etiqueta importada' : 'etiquetas importadas'}.`
-          : 'Todas as etiquetas do arquivo já estavam cadastradas.'
-      );
+      await applyImportedBackup(parsed);
     } catch (err) {
       showToast(err.message || 'Erro ao importar arquivo JSON.', true);
     } finally {

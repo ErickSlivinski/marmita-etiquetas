@@ -2,14 +2,14 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>EtiquetaFit — Catálogo e Impressão de Etiquetas</title>
   <meta name="description" content="Painel para organizar etiquetas de marmitas por categoria, selecionar quantidades de folhas A4 e exportar PDFs combinados prontos para impressão." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;600&family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=3" />
-  <link rel="stylesheet" href="theme-glass.css?v=3" />
+  <link rel="stylesheet" href="style.css?v=5" />
+  <link rel="stylesheet" href="theme-glass.css?v=5" />
 </head>
 <body>
   <div class="app-shell">
@@ -95,6 +95,14 @@
         </div>
 
         <div class="topbar-actions">
+          <button type="button" class="btn-secondary mobile-backup-btn" id="mobileBackupBtn" aria-label="Importar e Backup JSON">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            <span class="mobile-backup-label">Importar</span>
+          </button>
           <button type="button" class="checkout-trigger-btn" id="openCheckoutBtn">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
@@ -142,6 +150,7 @@
             <p>Envie arquivos PDF, imagens PNG/JPG/WEBP ou um pacote ZIP. O sistema lê o texto automaticamente para sugerir o nome e a categoria de cada marmita.</p>
             <div class="empty-actions">
               <button type="button" class="btn-primary" id="emptyUploadBtn">Selecionar arquivos</button>
+              <button type="button" class="btn-secondary" id="emptyRestoreBackupBtn">Importar backup atualizado (83)</button>
               <button type="button" class="btn-secondary" id="loadDemoBtn">Carregar etiquetas de exemplo</button>
             </div>
           </div>
@@ -312,6 +321,15 @@
       </div>
 
       <div class="settings-section">
+        <h4>Backup Atualizado (83 etiquetas · com Sucos 10×4 cm)</h4>
+        <p>Importe diretamente no celular com 1 toque ou baixe o arquivo JSON atualizado com as 82 marmitas + Desinberry.</p>
+        <div class="inline-row">
+          <button type="button" class="btn-primary flex-1" id="btnRestoreBundledBackup">Importar agora (1 toque)</button>
+          <a href="public/etiquetafit_backup_atualizado.json" download="etiquetafit_backup_atualizado.json" class="btn-secondary flex-1">Baixar JSON</a>
+        </div>
+      </div>
+
+      <div class="settings-section">
         <h4>Exportar ou Restaurar Catálogo</h4>
         <p>Salve todas as etiquetas e categorias em um arquivo JSON ou restaure um backup anterior.</p>
         <div class="inline-row">
@@ -357,6 +375,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script type="module" src="app.js?v=3"></script>
+  <script type="module" src="app.js?v=5"></script>
 </body>
 </html>
