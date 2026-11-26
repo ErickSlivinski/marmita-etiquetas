@@ -23,7 +23,7 @@ import {
   calculateCheckoutSummary,
   createCategorySlug,
   validateBackupPayload
-} from './lib/catalog.js?v=7';
+} from './lib/catalog.js?v=8';
 
 import {
   loadLabels,
@@ -33,9 +33,9 @@ import {
   loadCart,
   saveCart,
   clearAllStorage
-} from './lib/storage.js?v=7';
+} from './lib/storage.js?v=8';
 
-import { generateDemoLabels } from './lib/demoLabels.js?v=7';
+import { generateDemoLabels } from './lib/demoLabels.js?v=8';
 
 // Configure PDF.js worker if loaded
 if (window.pdfjsLib) {
@@ -1561,14 +1561,31 @@ function renderClaudeSnippet() {
   }
 }
 
+async function readJsonResponseSafe(res) {
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
+  if (!ct.includes('application/json')) return null;
+  return res.json().catch(() => null);
+}
+
+function buildStaticHostMessage() {
+  return `Servidor Node.js não encontrado neste endereço (${window.location.host}). Hospedagens estáticas como o GitHub Pages não executam o servidor MCP (/mcp) — use a URL publicada do servidor ou rode "npm start" localmente.`;
+}
+
 async function refreshIntegrationStatus() {
+  const fallbackMcpUrl = `${window.location.origin}/mcp`;
+  mcpEndpointInput.value = fallbackMcpUrl;
+
   try {
     const res = await fetch('/api/integrations/status', {
       headers: { 'X-Requested-With': 'EtiquetaFit' },
       cache: 'no-store'
     });
-    if (!res.ok) throw new Error('Falha ao consultar servidor.');
-    const status = await res.json();
+    const status = await readJsonResponseSafe(res);
+    if (!res.ok || !status) {
+      const isStaticOrMissing = res.status === 404 || res.status === 405 || !status;
+      throw new Error(isStaticOrMissing ? buildStaticHostMessage() : (status.error || 'Falha ao consultar servidor.'));
+    }
+
     lastIntegrationStatus = status;
 
     const syncDate = status.catalog?.syncedAt
@@ -1581,7 +1598,7 @@ async function refreshIntegrationStatus() {
       : 'não sincronizado';
     aiSyncSummary.textContent = `${status.catalog?.labelCount || 0} etiquetas no servidor · Última atualização: ${syncDate}`;
 
-    mcpEndpointInput.value = status.mcpUrl || `${window.location.origin}/mcp`;
+    mcpEndpointInput.value = status.mcpUrl || fallbackMcpUrl;
 
     if (status.auth?.source === 'env') {
       mcpTokenStatus.textContent = `Token MCP ativo via segredo do servidor (${status.auth.preview})`;
@@ -1598,7 +1615,12 @@ async function refreshIntegrationStatus() {
 
     renderClaudeSnippet();
   } catch (err) {
+    lastIntegrationStatus = null;
     aiSyncSummary.textContent = err.message || 'Não foi possível consultar o status do servidor.';
+    mcpTokenStatus.textContent = 'Servidor MCP indisponível neste endereço';
+    btnGenerateMcpToken.hidden = false;
+    btnGenerateMcpToken.textContent = 'Gerar token MCP';
+    renderClaudeSnippet();
   }
 }
 
@@ -1678,8 +1700,11 @@ btnGenerateMcpToken?.addEventListener('click', async () => {
       method: 'POST',
       headers: { 'X-Requested-With': 'EtiquetaFit' }
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Erro ao gerar token MCP.');
+    const data = await readJsonResponseSafe(res);
+    if (!res.ok || !data?.token) {
+      const isStaticOrMissing = res.status === 404 || res.status === 405 || !data;
+      throw new Error(isStaticOrMissing ? buildStaticHostMessage() : (data.error || 'Erro ao gerar token MCP.'));
+    }
     lastGeneratedMcpToken = data.token;
     mcpTokenRevealInput.value = data.token;
     mcpTokenRevealBox.hidden = false;
@@ -1784,7 +1809,7 @@ async function applyImportedBackup(parsed) {
 async function restoreUpdatedBackupFromServer() {
   showProgress('Carregando backup atualizado (83 etiquetas)...', 40);
   try {
-    const res = await fetch('public/etiquetafit_backup_atualizado.json?v=7', { cache: 'no-store' });
+    const res = await fetch('public/etiquetafit_backup_atualizado.json?v=8', { cache: 'no-store' });
     if (!res.ok) throw new Error('Não foi possível baixar o backup atualizado.');
     const parsed = await res.json();
     updateProgress(85, 'Salvando etiquetas no catálogo...');
