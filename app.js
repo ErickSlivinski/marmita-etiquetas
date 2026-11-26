@@ -23,19 +23,19 @@ import {
   calculateCheckoutSummary,
   createCategorySlug,
   validateBackupPayload
-} from './lib/catalog.js?v=5';
+} from './lib/catalog.js?v=7';
 
 import {
   loadLabels,
-  saveLabels,
+  saveLabels as storeSaveLabels,
   loadCategories,
-  saveCategories,
+  saveCategories as storeSaveCategories,
   loadCart,
   saveCart,
   clearAllStorage
-} from './lib/storage.js?v=5';
+} from './lib/storage.js?v=7';
 
-import { generateDemoLabels } from './lib/demoLabels.js?v=5';
+import { generateDemoLabels } from './lib/demoLabels.js?v=7';
 
 // Configure PDF.js worker if loaded
 if (window.pdfjsLib) {
@@ -148,6 +148,26 @@ const clearConfirmInput = document.getElementById('clearConfirmInput');
 const cancelClearBtn = document.getElementById('cancelClearBtn');
 const confirmClearBtn = document.getElementById('confirmClearBtn');
 
+// Settings Tabs & Claude MCP Controls
+const tabBackupBtn = document.getElementById('tabBackupBtn');
+const tabClaudeBtn = document.getElementById('tabClaudeBtn');
+const settingsTabBackup = document.getElementById('settingsTabBackup');
+const settingsTabClaude = document.getElementById('settingsTabClaude');
+const aiSyncSummary = document.getElementById('aiSyncSummary');
+const btnSyncCatalogNow = document.getElementById('btnSyncCatalogNow');
+const mcpEndpointInput = document.getElementById('mcpEndpointInput');
+const btnCopyMcpUrl = document.getElementById('btnCopyMcpUrl');
+const mcpTokenStatus = document.getElementById('mcpTokenStatus');
+const btnGenerateMcpToken = document.getElementById('btnGenerateMcpToken');
+const mcpTokenRevealBox = document.getElementById('mcpTokenRevealBox');
+const mcpTokenRevealInput = document.getElementById('mcpTokenRevealInput');
+const btnCopyMcpToken = document.getElementById('btnCopyMcpToken');
+const claudeModeDesktopBtn = document.getElementById('claudeModeDesktopBtn');
+const claudeModeProBtn = document.getElementById('claudeModeProBtn');
+const claudeModeHint = document.getElementById('claudeModeHint');
+const claudeSnippetBox = document.getElementById('claudeSnippetBox');
+const btnCopyClaudeSnippet = document.getElementById('btnCopyClaudeSnippet');
+
 // Progress & Toasts
 const progressOverlay = document.getElementById('progressOverlay');
 const progressText = document.getElementById('progressText');
@@ -197,6 +217,9 @@ async function init() {
   }
 
   renderAll();
+  if (labels.length > 0) {
+    scheduleServerCatalogSync();
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1445,18 +1468,235 @@ function loadImage(src) {
   });
 }
 
+// ─── Server Catalog Sync & Claude MCP Integration ───────────────────────────
+
+let serverSyncTimer = null;
+let lastGeneratedMcpToken = '';
+let activeClaudeMode = 'desktop';
+let lastIntegrationStatus = null;
+
+async function saveLabels(nextLabels) {
+  await storeSaveLabels(nextLabels);
+  if (nextLabels.length > 0) {
+    scheduleServerCatalogSync();
+  }
+}
+
+async function saveCategories(nextCategories) {
+  await storeSaveCategories(nextCategories);
+  if (labels.length > 0) {
+    scheduleServerCatalogSync();
+  }
+}
+
+function scheduleServerCatalogSync() {
+  clearTimeout(serverSyncTimer);
+  serverSyncTimer = setTimeout(() => {
+    syncCatalogToServer({ silent: true }).catch(() => {});
+  }, 600);
+}
+
+async function syncCatalogToServer({ silent = false } = {}) {
+  const res = await fetch('/api/catalog/sync', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'EtiquetaFit'
+    },
+    body: JSON.stringify({
+      version: 2,
+      categories,
+      labels
+    })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Erro ao sincronizar catálogo com o servidor.');
+  }
+  if (!silent) {
+    showToast(`Catálogo sincronizado (${data.labelCount} etiquetas no servidor).`);
+  }
+  if (!settingsModal.hidden && !settingsTabClaude.hidden) {
+    await refreshIntegrationStatus();
+  }
+  return data;
+}
+
+function renderClaudeSnippet() {
+  const mcpUrl = lastIntegrationStatus?.mcpUrl || `${window.location.origin}/mcp`;
+  const tokenDisplay = lastGeneratedMcpToken || '<SEU_TOKEN_MCP>';
+
+  if (activeClaudeMode === 'desktop') {
+    claudeModeHint.textContent =
+      'No Claude Desktop (plano gratuito): Configuracoes -> Desenvolvedor -> Editar configuracao (claude_desktop_config.json) e cole abaixo:';
+    claudeSnippetBox.textContent = JSON.stringify(
+      {
+        mcpServers: {
+          etiquetafit: {
+            command: 'npx',
+            args: [
+              '-y',
+              'mcp-remote',
+              mcpUrl,
+              '--header',
+              `Authorization:Bearer ${tokenDisplay}`
+            ]
+          }
+        }
+      },
+      null,
+      2
+    );
+  } else {
+    claudeModeHint.textContent =
+      'No Claude Pro (navegador ou celular): Configuracoes -> Conectores -> Adicionar conector personalizado e use a URL e cabeçalho abaixo:';
+    claudeSnippetBox.textContent = [
+      `URL do conector MCP: ${mcpUrl}`,
+      `Cabecalho Authorization: Bearer ${tokenDisplay}`,
+      '',
+      'Exemplo API REST direta (POST):',
+      `${window.location.origin}/api/orders/pdf`,
+      '{ "items": [{ "nome": "Desinberry", "folhas": 1 }] }'
+    ].join('\n');
+  }
+}
+
+async function refreshIntegrationStatus() {
+  try {
+    const res = await fetch('/api/integrations/status', {
+      headers: { 'X-Requested-With': 'EtiquetaFit' },
+      cache: 'no-store'
+    });
+    if (!res.ok) throw new Error('Falha ao consultar servidor.');
+    const status = await res.json();
+    lastIntegrationStatus = status;
+
+    const syncDate = status.catalog?.syncedAt
+      ? new Date(status.catalog.syncedAt).toLocaleString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      : 'não sincronizado';
+    aiSyncSummary.textContent = `${status.catalog?.labelCount || 0} etiquetas no servidor · Última atualização: ${syncDate}`;
+
+    mcpEndpointInput.value = status.mcpUrl || `${window.location.origin}/mcp`;
+
+    if (status.auth?.source === 'env') {
+      mcpTokenStatus.textContent = `Token MCP ativo via segredo do servidor (${status.auth.preview})`;
+      btnGenerateMcpToken.hidden = true;
+    } else if (status.auth?.configured) {
+      mcpTokenStatus.textContent = `Token MCP ativo (${status.auth.preview})`;
+      btnGenerateMcpToken.hidden = false;
+      btnGenerateMcpToken.textContent = 'Gerar novo token MCP';
+    } else {
+      mcpTokenStatus.textContent = 'Nenhum token MCP gerado ainda';
+      btnGenerateMcpToken.hidden = false;
+      btnGenerateMcpToken.textContent = 'Gerar token MCP';
+    }
+
+    renderClaudeSnippet();
+  } catch (err) {
+    aiSyncSummary.textContent = err.message || 'Não foi possível consultar o status do servidor.';
+  }
+}
+
+function setSettingsTab(tab) {
+  const isClaude = tab === 'claude';
+  tabBackupBtn.classList.toggle('active', !isClaude);
+  tabBackupBtn.ariaSelected = !isClaude ? 'true' : 'false';
+  tabClaudeBtn.classList.toggle('active', isClaude);
+  tabClaudeBtn.ariaSelected = isClaude ? 'true' : 'false';
+  settingsTabBackup.hidden = isClaude;
+  settingsTabClaude.hidden = !isClaude;
+  if (isClaude) {
+    refreshIntegrationStatus();
+  }
+}
+
+async function copyTextWithToast(text, successMsg) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(successMsg);
+  } catch {
+    showToast('Não foi possível copiar automaticamente. Selecione e copie manualmente.', true);
+  }
+}
+
 // ─── Backup & Settings Modal ─────────────────────────────────────────────────
 
-function openSettingsModal() {
+function openSettingsModal(initialTab = 'backup') {
   closeMobileSidebar();
   clearConfirmBox.hidden = true;
   clearConfirmInput.value = '';
   confirmClearBtn.disabled = true;
+  setSettingsTab(initialTab);
   settingsModal.hidden = false;
 }
 
-settingsBtn.addEventListener('click', openSettingsModal);
-mobileBackupBtn?.addEventListener('click', openSettingsModal);
+settingsBtn.addEventListener('click', () => openSettingsModal('backup'));
+mobileBackupBtn?.addEventListener('click', () => openSettingsModal('backup'));
+
+tabBackupBtn?.addEventListener('click', () => setSettingsTab('backup'));
+tabClaudeBtn?.addEventListener('click', () => setSettingsTab('claude'));
+
+claudeModeDesktopBtn?.addEventListener('click', () => {
+  activeClaudeMode = 'desktop';
+  claudeModeDesktopBtn.classList.add('active');
+  claudeModeDesktopBtn.ariaSelected = 'true';
+  claudeModeProBtn.classList.remove('active');
+  claudeModeProBtn.ariaSelected = 'false';
+  renderClaudeSnippet();
+});
+
+claudeModeProBtn?.addEventListener('click', () => {
+  activeClaudeMode = 'pro';
+  claudeModeProBtn.classList.add('active');
+  claudeModeProBtn.ariaSelected = 'true';
+  claudeModeDesktopBtn.classList.remove('active');
+  claudeModeDesktopBtn.ariaSelected = 'false';
+  renderClaudeSnippet();
+});
+
+btnSyncCatalogNow?.addEventListener('click', async () => {
+  try {
+    await syncCatalogToServer({ silent: false });
+  } catch (err) {
+    showToast(err.message || 'Erro ao sincronizar catálogo.', true);
+  }
+});
+
+btnCopyMcpUrl?.addEventListener('click', () => {
+  copyTextWithToast(mcpEndpointInput.value, 'URL do endpoint MCP copiada.');
+});
+
+btnGenerateMcpToken?.addEventListener('click', async () => {
+  try {
+    const res = await fetch('/api/integrations/mcp-token', {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'EtiquetaFit' }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Erro ao gerar token MCP.');
+    lastGeneratedMcpToken = data.token;
+    mcpTokenRevealInput.value = data.token;
+    mcpTokenRevealBox.hidden = false;
+    await refreshIntegrationStatus();
+    showToast('Token MCP gerado. Copie a configuração abaixo.');
+  } catch (err) {
+    showToast(err.message || 'Erro ao gerar token MCP.', true);
+  }
+});
+
+btnCopyMcpToken?.addEventListener('click', () => {
+  copyTextWithToast(mcpTokenRevealInput.value, 'Token MCP copiado.');
+});
+
+btnCopyClaudeSnippet?.addEventListener('click', () => {
+  copyTextWithToast(claudeSnippetBox.textContent, 'Configuração do Claude copiada.');
+});
 
 closeSettings.addEventListener('click', () => {
   settingsModal.hidden = true;
@@ -1544,7 +1784,7 @@ async function applyImportedBackup(parsed) {
 async function restoreUpdatedBackupFromServer() {
   showProgress('Carregando backup atualizado (83 etiquetas)...', 40);
   try {
-    const res = await fetch('public/etiquetafit_backup_atualizado.json?v=5', { cache: 'no-store' });
+    const res = await fetch('public/etiquetafit_backup_atualizado.json?v=7', { cache: 'no-store' });
     if (!res.ok) throw new Error('Não foi possível baixar o backup atualizado.');
     const parsed = await res.json();
     updateProgress(85, 'Salvando etiquetas no catálogo...');

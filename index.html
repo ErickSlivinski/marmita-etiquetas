@@ -8,8 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;600&family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=5" />
-  <link rel="stylesheet" href="theme-glass.css?v=5" />
+  <link rel="stylesheet" href="style.css?v=7" />
+  <link rel="stylesheet" href="theme-glass.css?v=7" />
 </head>
 <body>
   <div class="app-shell">
@@ -310,47 +310,96 @@
     </div>
   </div>
 
-  <!-- Settings & Backup Modal -->
+  <!-- Settings, Backup & AI Integrations Modal -->
   <div class="modal-overlay" id="settingsModal" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+    <div class="modal modal-settings" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
       <div class="modal-header">
-        <h3 id="settingsModalTitle">Backup e Gerenciamento</h3>
+        <h3 id="settingsModalTitle">Backup e Integrações</h3>
         <button type="button" class="icon-btn" id="closeSettings" aria-label="Fechar backup e dados">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
       </div>
 
-      <div class="settings-section">
-        <h4>Backup Atualizado (83 etiquetas · com Sucos 10×4 cm)</h4>
-        <p>Importe diretamente no celular com 1 toque ou baixe o arquivo JSON atualizado com as 82 marmitas + Desinberry.</p>
-        <div class="inline-row">
-          <button type="button" class="btn-primary flex-1" id="btnRestoreBundledBackup">Importar agora (1 toque)</button>
-          <a href="public/etiquetafit_backup_atualizado.json" download="etiquetafit_backup_atualizado.json" class="btn-secondary flex-1">Baixar JSON</a>
-        </div>
+      <div class="modal-tabs" role="tablist" aria-label="Seções de backup e integrações">
+        <button type="button" role="tab" id="tabBackupBtn" class="modal-tab-btn active" aria-selected="true">Backup e Dados</button>
+        <button type="button" role="tab" id="tabClaudeBtn" class="modal-tab-btn" aria-selected="false">Claude (MCP)</button>
       </div>
 
-      <div class="settings-section">
-        <h4>Exportar ou Restaurar Catálogo</h4>
-        <p>Salve todas as etiquetas e categorias em um arquivo JSON ou restaure um backup anterior.</p>
-        <div class="inline-row">
-          <button type="button" class="btn-secondary flex-1" id="btnExportBackup">Exportar JSON</button>
-          <button type="button" class="btn-secondary flex-1" id="btnImportBackup">Importar JSON</button>
-        </div>
-        <input type="file" id="importInput" accept=".json" hidden />
-      </div>
-
-      <div class="settings-section settings-danger">
-        <h4>Limpar Biblioteca</h4>
-        <p>Remove todas as etiquetas salvas no navegador. Um backup automático será baixado antes de apagar.</p>
-        <button type="button" class="btn-danger" id="btnDangerClearAll">Apagar Todas as Etiquetas</button>
-
-        <div id="clearConfirmBox" class="clear-confirm-box" hidden>
-          <p class="confirm-title">Digite <strong>APAGAR</strong> para confirmar:</p>
-          <input type="text" id="clearConfirmInput" class="text-input" placeholder="APAGAR" autocomplete="off" />
+      <div id="settingsTabBackup">
+        <div class="settings-section">
+          <h4>Backup Atualizado (83 etiquetas · com Sucos 10×4 cm)</h4>
+          <p>Importe diretamente no celular com 1 toque ou baixe o arquivo JSON atualizado com as 82 marmitas + Desinberry.</p>
           <div class="inline-row">
-            <button type="button" class="btn-secondary flex-1" id="cancelClearBtn">Cancelar</button>
-            <button type="button" class="btn-danger-solid flex-1" id="confirmClearBtn" disabled>Confirmar</button>
+            <button type="button" class="btn-primary flex-1" id="btnRestoreBundledBackup">Importar agora (1 toque)</button>
+            <a href="public/etiquetafit_backup_atualizado.json" download="etiquetafit_backup_atualizado.json" class="btn-secondary flex-1">Baixar JSON</a>
           </div>
+        </div>
+
+        <div class="settings-section">
+          <h4>Exportar ou Restaurar Catálogo</h4>
+          <p>Salve todas as etiquetas e categorias em um arquivo JSON ou restaure um backup anterior.</p>
+          <div class="inline-row">
+            <button type="button" class="btn-secondary flex-1" id="btnExportBackup">Exportar JSON</button>
+            <button type="button" class="btn-secondary flex-1" id="btnImportBackup">Importar JSON</button>
+          </div>
+          <input type="file" id="importInput" accept=".json" hidden />
+        </div>
+
+        <div class="settings-section settings-danger">
+          <h4>Limpar Biblioteca</h4>
+          <p>Remove todas as etiquetas salvas no navegador. Um backup automático será baixado antes de apagar.</p>
+          <button type="button" class="btn-danger" id="btnDangerClearAll">Apagar Todas as Etiquetas</button>
+
+          <div id="clearConfirmBox" class="clear-confirm-box" hidden>
+            <p class="confirm-title">Digite <strong>APAGAR</strong> para confirmar:</p>
+            <input type="text" id="clearConfirmInput" class="text-input" placeholder="APAGAR" autocomplete="off" />
+            <div class="inline-row">
+              <button type="button" class="btn-secondary flex-1" id="cancelClearBtn">Cancelar</button>
+              <button type="button" class="btn-danger-solid flex-1" id="confirmClearBtn" disabled>Confirmar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="settingsTabClaude" hidden>
+        <div class="settings-section">
+          <h4>Sincronização com a IA</h4>
+          <p id="aiSyncSummary" class="tabular-nums">Carregando status do servidor...</p>
+          <button type="button" class="btn-secondary" id="btnSyncCatalogNow">Sincronizar catálogo agora</button>
+        </div>
+
+        <div class="settings-section">
+          <h4>Conectar ao Claude (MCP e API)</h4>
+          <p>Peça etiquetas no chat (ex.: &ldquo;2 folhas de strogonoff e 1 de desinberry&rdquo;) para receber o PDF A4 pronto.</p>
+          <div class="form-field">
+            <label for="mcpEndpointInput">Endpoint MCP (Streamable HTTP)</label>
+            <div class="inline-row">
+              <input type="text" id="mcpEndpointInput" class="text-input mono-input" readonly />
+              <button type="button" class="btn-secondary" id="btnCopyMcpUrl">Copiar URL</button>
+            </div>
+          </div>
+
+          <div class="integration-token-row">
+            <span id="mcpTokenStatus" class="integration-meta tabular-nums">Token MCP: verificando...</span>
+            <button type="button" class="btn-secondary-sm" id="btnGenerateMcpToken">Gerar token MCP</button>
+          </div>
+
+          <div id="mcpTokenRevealBox" class="token-reveal-box" hidden>
+            <p class="token-reveal-note">Copie e salve este token agora (exibição única):</p>
+            <div class="inline-row">
+              <input type="text" id="mcpTokenRevealInput" class="text-input mono-input" readonly />
+              <button type="button" class="btn-secondary" id="btnCopyMcpToken">Copiar</button>
+            </div>
+          </div>
+
+          <div class="claude-client-switch" role="tablist" aria-label="Tipo de cliente Claude">
+            <button type="button" role="tab" id="claudeModeDesktopBtn" class="modal-tab-btn active" aria-selected="true">Desktop (Grátis)</button>
+            <button type="button" role="tab" id="claudeModeProBtn" class="modal-tab-btn" aria-selected="false">Pro (Web / App)</button>
+          </div>
+
+          <p id="claudeModeHint" class="integration-meta"></p>
+          <pre id="claudeSnippetBox" class="config-snippet"></pre>
+          <button type="button" class="btn-primary" id="btnCopyClaudeSnippet">Copiar configuração</button>
         </div>
       </div>
     </div>
@@ -375,6 +424,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script type="module" src="app.js?v=5"></script>
+  <script type="module" src="app.js?v=7"></script>
 </body>
 </html>
