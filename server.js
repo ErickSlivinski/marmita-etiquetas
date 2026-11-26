@@ -11,7 +11,7 @@ import {
   sanitizePdfFilename,
   searchCatalogLabels,
   syncCatalog,
-  verifyMcpBearerToken
+  verifyMcpRequestAuth
 } from './lib/serverStore.js';
 import { createEtiquetaFitMcpServer, createOrderPdfAndDeliver, resolvePublicBaseUrl } from './lib/mcpServer.js';
 
@@ -28,9 +28,9 @@ app.use(express.json({ limit: '35mb' }));
 
 async function requireApiOrUiAuth(req, res, next) {
   if (isTrustedUiRequest(req)) return next();
-  const ok = await verifyMcpBearerToken(req.get('authorization'));
+  const ok = await verifyMcpRequestAuth(req);
   if (!ok) {
-    return res.status(401).json({ error: 'Não autorizado. Envie Authorization: Bearer <MCP_API_TOKEN>.' });
+    return res.status(401).json({ error: 'Não autorizado. Envie Authorization: Bearer <MCP_API_TOKEN> ou x-api-key.' });
   }
   return next();
 }
@@ -43,9 +43,9 @@ function requireTrustedUi(req, res, next) {
 }
 
 async function requireBearerAuth(req, res, next) {
-  const ok = await verifyMcpBearerToken(req.get('authorization'));
+  const ok = await verifyMcpRequestAuth(req);
   if (!ok) {
-    return res.status(401).json({ error: 'Token Bearer inválido ou ausente.' });
+    return res.status(401).json({ error: 'Token de autenticação inválido ou ausente.' });
   }
   return next();
 }

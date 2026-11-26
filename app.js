@@ -1552,7 +1552,8 @@ function renderClaudeSnippet() {
       'No Claude Pro (navegador ou celular): Configuracoes -> Conectores -> Adicionar conector personalizado e use a URL e cabeçalho abaixo:';
     claudeSnippetBox.textContent = [
       `URL do conector MCP: ${mcpUrl}`,
-      `Cabecalho Authorization: Bearer ${tokenDisplay}`,
+      `Cabecalho x-api-key: ${tokenDisplay}`,
+      `Ou Authorization: Bearer ${tokenDisplay}`,
       '',
       'Exemplo API REST direta (POST):',
       `${window.location.origin}/api/orders/pdf`,
