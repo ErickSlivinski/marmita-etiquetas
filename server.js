@@ -14,6 +14,7 @@ import {
   verifyMcpRequestAuth
 } from './lib/serverStore.js';
 import { createEtiquetaFitMcpServer, createOrderPdfAndDeliver, resolvePublicBaseUrl } from './lib/mcpServer.js';
+import { registerOAuthRoutes, verifyOAuthBearerToken } from './lib/oauthServer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,7 +29,7 @@ app.use(express.json({ limit: '35mb' }));
 
 async function requireApiOrUiAuth(req, res, next) {
   if (isTrustedUiRequest(req)) return next();
-  const ok = await verifyMcpRequestAuth(req);
+  const ok = (await verifyMcpRequestAuth(req)) || verifyOAuthBearerToken(req.get('authorization'));
   if (!ok) {
     return res.status(401).json({ error: 'Não autorizado. Envie Authorization: Bearer <MCP_API_TOKEN> ou x-api-key.' });
   }
@@ -43,12 +44,17 @@ function requireTrustedUi(req, res, next) {
 }
 
 async function requireBearerAuth(req, res, next) {
-  const ok = await verifyMcpRequestAuth(req);
+  const ok = (await verifyMcpRequestAuth(req)) || verifyOAuthBearerToken(req.get('authorization'));
   if (!ok) {
+    const baseUrl = resolvePublicBaseUrl(req);
+    res.setHeader('WWW-Authenticate', `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`);
     return res.status(401).json({ error: 'Token de autenticação inválido ou ausente.' });
   }
   return next();
 }
+
+// MCP OAuth 2.1 + PKCE + DCR endpoints (for Claude Custom Connectors)
+registerOAuthRoutes(app, resolvePublicBaseUrl);
 
 // Health check
 app.get('/api/health', (_req, res) => {

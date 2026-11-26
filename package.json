@@ -8,8 +8,8 @@
     "dev": "node server.js",
     "start": "node server.js",
     "test": "node --test lib/catalog.test.js lib/server.test.js",
-    "build": "node --check server.js && node --check app.js && node --check lib/catalog.js && node --check lib/pdfServer.js && node --check lib/serverStore.js && node --check lib/mcpServer.js",
-    "lint": "node --check server.js && node --check app.js && node --check lib/catalog.js && node --check lib/pdfServer.js && node --check lib/serverStore.js && node --check lib/mcpServer.js"
+    "build": "node --check server.js && node --check app.js && node --check lib/catalog.js && node --check lib/pdfServer.js && node --check lib/serverStore.js && node --check lib/oauthServer.js && node --check lib/mcpServer.js",
+    "lint": "node --check server.js && node --check app.js && node --check lib/catalog.js && node --check lib/pdfServer.js && node --check lib/serverStore.js && node --check lib/oauthServer.js && node --check lib/mcpServer.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
